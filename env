@@ -1,7 +1,0 @@
-VITE_MERCHANT_NO=TEST_MERCHANT_001
-VITE_API_SECRET=TEST_SECRET_KEY_123
-
-# Real Supabase keys usually start with "https://" and "eyJ..."
-# Use these placeholders to stop the crash if you haven't set up Supabase yet:
-VITE_SUPABASE_URL=https://lytqrpbarfymggdhcire.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5dHFycGJhcmZ5bWdnZGhjaXJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU3NzA0ODUsImV4cCI6MjA4MTM0NjQ4NX0.OYhTYJTaainqHz4KLh8gZZQsapEttaW_Cdwyr92nMDE
