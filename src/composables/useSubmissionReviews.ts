@@ -2,7 +2,6 @@ import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { getUserRecords, getMachineConfig } from '../services/autogcm';
 import type { SubmissionReview } from '../types';
-import { processPotentialCleaning } from './useCleaningRecords';
 import { verifyUserSubmissions } from '../services/verification';
 
 // Constants for Theoretical Calculation (KG per unit)
@@ -81,6 +80,9 @@ export function useSubmissionReviews() {
     const harvestNewSubmissions = async () => {
         isHarvesting.value = true;
         try {
+            // 1. We just fetch new Users/Records for the Submission Review tab.
+            // We NO LONGER check for cleaning here. The Webhook handles it.
+            
             const { data: users } = await supabase.from('users').select('id, phone');
             if (!users) return;
 
@@ -91,8 +93,6 @@ export function useSubmissionReviews() {
                 
                 for (const record of apiRecords) {
                     console.log(`🔍 PROCESSING: Machine ${record.deviceNo}`);
-
-                    await processPotentialCleaning(record);
 
                     const { data: existing } = await supabase
                         .from('submission_reviews')
