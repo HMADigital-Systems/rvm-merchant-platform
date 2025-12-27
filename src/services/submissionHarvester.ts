@@ -44,8 +44,11 @@ export const runHarvester = async () => {
                 // ---------------------------------------------------------
                 // 🔥 STEP A: CHECK FOR MISSED CLEANING
                 // ---------------------------------------------------------
-                // Even if we have the submission, we might have missed the cleaning event associated with it.
-                await processPotentialCleaning(record);
+                // FIX: Only check for cleaning if the user actually recycled something (> 0).
+                // This ignores the "0kg" glitches that cause False Positives.
+                if (Number(record.weight) > 0) {
+                     await processPotentialCleaning(record);
+                }
 
                 // ---------------------------------------------------------
                 // 🔥 STEP B: CHECK FOR SUBMISSION
@@ -86,55 +89,58 @@ export const runHarvester = async () => {
 };
 
 // ------------------------------------------------------------------
-// 🧹 CLEANING DETECTION LOGIC (The New Function)
+// 🧹 CLEANING DETECTION LOGIC (ROBUST VERSION)
 // ------------------------------------------------------------------
 async function processPotentialCleaning(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
         
-        // 1. Find the PREVIOUS submission for this machine in our DB
-        // We look for the most recent record BEFORE this API record's time
+        // 1. Find the PREVIOUS submission (The snapshot before this event)
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
             .select('bin_weight_snapshot, waste_type, submitted_at, photo_url')
             .eq('device_no', apiRecord.deviceNo)
-            .lt('submitted_at', apiRecord.createTime) // Must be older than current record
+            .lt('submitted_at', apiRecord.createTime) 
             .order('submitted_at', { ascending: false })
             .limit(1)
             .maybeSingle();
 
-        if (!lastRecord) return; // No history, can't compare
+        if (!lastRecord) return; 
 
         const previousWeight = Number(lastRecord.bin_weight_snapshot || 0);
 
-        // 2. THE LOGIC: Did the weight drop significantly?
-        // - Previous was full (> 0.5kg)
-        // - Current is empty (< 1.0kg)
-        // - Current is less than Previous
+        // 2. THE LOGIC: High -> Low Drop
+        // Previous was > 0.5kg, Current is < 1.0kg, and weight went DOWN.
         if (previousWeight > 0.5 && currentWeight < 1.0 && currentWeight < previousWeight) {
             
-            // 3. Deduplication: Did we already log this cleaning?
+            // 3. DEDUPLICATION CHECK (Simplified)
+            // Just check: Do we have a cleaning record for this Device at this exact Time?
             const { data: existingClean } = await supabase
                 .from('cleaning_records')
                 .select('id')
                 .eq('device_no', apiRecord.deviceNo)
-                .gt('cleaned_at', lastRecord.submitted_at) // Cleaning happened after last submission
-                .lt('cleaned_at', apiRecord.createTime)    // Cleaning happened before current submission
+                .eq('cleaned_at', apiRecord.createTime) // Strict Time Match
                 .maybeSingle();
 
             if (!existingClean) {
-                console.log(`   🧹 [HARVESTER] MISSED CLEANING DETECTED! ${apiRecord.deviceNo}: ${previousWeight}kg -> ${currentWeight}kg`);
+                console.log(`   🧹 [HARVESTER] CLEANING DETECTED! ${apiRecord.deviceNo}: ${previousWeight}kg -> ${currentWeight}kg`);
                 
-                // 4. Log it
-                await supabase.from('cleaning_records').insert({
+                // 4. INSERT (With Error Handling for Safety Lock)
+                const { error } = await supabase.from('cleaning_records').insert({
                     device_no: apiRecord.deviceNo,
-                    // We estimate cleaning time as slightly before the new record
                     cleaned_at: apiRecord.createTime, 
                     waste_type: lastRecord.waste_type || 'Unknown',
                     bag_weight_collected: previousWeight,
-                    photo_url: lastRecord.photo_url, // Use last known photo as evidence
+                    photo_url: lastRecord.photo_url, 
                     status: 'PENDING'
                 });
+
+                // If error is code 23505 (Unique Violation), it means we hit the Safety Lock. That's good!
+                if (error && error.code !== '23505') {
+                    console.error("   ⚠️ Failed to insert cleaning:", error.message);
+                }
+            } else {
+                // Duplicate found, silently skip
             }
         }
     } catch (err) {
