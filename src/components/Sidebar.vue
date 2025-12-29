@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router';
-// ✅ ADDED: ClipboardCheck
+import { useAuthStore } from '../stores/auth';
 import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2 } from 'lucide-vue-next';
 
 const route = useRoute();
+const auth = useAuthStore();
 const isActive = (path: string) => route.path === path;
+
+const handleLogout = async () => {
+  try {
+    await auth.logout();
+  } catch (err) {
+    console.error("Logout failed", err);
+  }
+};
 </script>
 
 <template>
@@ -75,7 +84,10 @@ const isActive = (path: string) => route.path === path;
     </nav>
 
     <div class="p-4 border-t border-gray-100">
-      <button class="flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg w-full transition-colors">
+      <button 
+        @click="handleLogout"
+        class="flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg w-full transition-colors cursor-pointer"
+      >
         <LogOut :size="20" />
         Logout
       </button>

@@ -27,13 +27,31 @@ export interface User {
   last_synced_at?: string | null;
 }
 
+export interface UserProfile {
+  nickname?: string;
+  phone?: string;
+  avatar_url?: string;
+}
+
 export interface Withdrawal {
   id: string;
   user_id: string;
-  phone: string;
   amount: number;
-  status: WithdrawalStatus; // Now accepts 'pending' | 'external_sync' | etc.
+  status: WithdrawalStatus;
   created_at: string;
+  updated_at: string;
+  
+  // ✅ NEW: Payment Details
+  bank_name?: string;
+  account_number?: string;
+  account_holder_name?: string;
+  
+  // ✅ NEW: Admin Fields
+  admin_note?: string;
+  reviewed_by?: string;
+
+  // ✅ Joined User Data
+  users?: UserProfile; 
 }
 
 export interface Machine {
@@ -120,4 +138,6 @@ export interface SubmissionReview {
     avatar_url: string;
     phone: string | null;
   };
+
+
 }

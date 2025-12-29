@@ -1,8 +1,16 @@
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import { RouterView, useRoute } from 'vue-router';
 import Sidebar from './components/Sidebar.vue';
+import { useAuthStore } from './stores/auth'; // Import Store
 
 const route = useRoute();
+const auth = useAuthStore();
+
+// 🔥 RESTORE SESSION ON REFRESH
+onMounted(() => {
+  auth.initializeAuth();
+});
 </script>
 
 <template>
