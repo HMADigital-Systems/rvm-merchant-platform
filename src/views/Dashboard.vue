@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { supabase } from '../services/supabase';
-import { useMachineStore } from '../stores/machines'; // 1. Import Store
+import { useMachineStore } from '../stores/machines';
 import { storeToRefs } from 'pinia';
 import { AlertCircle, Server, Coins, Activity } from 'lucide-vue-next';
+import StatsCard from '../components/StatsCard.vue'; // ✅ Import your component
 
-// 2. Setup Store
+// Setup Store
 const machineStore = useMachineStore();
 const { machines, loading: machineLoading } = storeToRefs(machineStore);
 
@@ -13,19 +14,17 @@ const pendingCount = ref<number>(0);
 const totalPoints = ref<number>(0);
 const dashboardLoading = ref<boolean>(true);
 
-// 3. Computed Property for Online Count
-// This updates automatically whenever the store updates!
+// Computed Property for Online Count
 const onlineMachinesCount = computed(() => {
   return machines.value.filter((m) => m.isOnline).length;
 });
 
 onMounted(async () => {
   try {
-    // A. Trigger Machine Store (Uses Cache if available)
-    // We don't await this blocking the whole UI, we let it load in parallel
+    // 1. Trigger Machine Store (Parallel Load)
     machineStore.fetchMachines();
 
-    // B. Get Pending Withdrawals count (Supabase)
+    // 2. Get Pending Withdrawals Count
     const { count, error } = await supabase
       .from('withdrawals')
       .select('*', { count: 'exact', head: true })
@@ -35,13 +34,30 @@ onMounted(async () => {
       pendingCount.value = count;
     }
 
-    // C. Get Total Points (Supabase)
-    const { data: userData, error: userError } = await supabase
+    // 3. 🔥 FIX: Calculate True Lifetime Points
+    // Formula: (Current Live Balance) + (All Points Ever Withdrawn/Pending)
+    
+    // A. Fetch Current "Live" Points from all users
+    const { data: usersData, error: userError } = await supabase
       .from('users')
       .select('lifetime_integral');
 
-    if (!userError && userData) {
-      totalPoints.value = userData.reduce((sum, user) => sum + Number(user.lifetime_integral || 0), 0);
+    // B. Fetch ALL withdrawals that represent points leaving the wallet
+    // We exclude 'REJECTED' because those points are usually refunded to the user.
+    const { data: withdrawnData, error: withdrawError } = await supabase
+      .from('withdrawals')
+      .select('amount')
+      .neq('status', 'REJECTED'); // ✅ Count PENDING, APPROVED, PAID, EXTERNAL_SYNC
+
+    if (!userError && !withdrawError) {
+      // Sum 1: What users currently have
+      const currentLiveSum = usersData?.reduce((sum, user) => sum + Number(user.lifetime_integral || 0), 0) || 0;
+
+      // Sum 2: What users have already spent/requested
+      const withdrawnSum = withdrawnData?.reduce((sum, w) => sum + Number(w.amount || 0), 0) || 0;
+
+      // Final Total: The true history of all points generated
+      totalPoints.value = currentLiveSum + withdrawnSum;
     }
 
   } catch (err) {
@@ -51,7 +67,7 @@ onMounted(async () => {
   }
 });
 
-const formatNumber = (num: number) => num.toLocaleString();
+const formatNumber = (num: number) => num.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 </script>
 
 <template>
@@ -63,42 +79,39 @@ const formatNumber = (num: number) => num.toLocaleString();
     <div v-else>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
-          <div class="flex items-center justify-between mb-4">
-            <span class="text-gray-500 font-medium">Pending Withdrawals</span>
-            <div class="p-2 bg-amber-50 rounded-lg text-amber-600">
-              <AlertCircle :size="24" />
-            </div>
-          </div>
-          <div class="text-3xl font-bold text-gray-900 mb-1">{{ pendingCount }}</div>
-          <div class="text-xs text-amber-600 font-medium">Action Required</div>
-        </div>
+        <StatsCard 
+          title="Pending Withdrawals" 
+          :value="pendingCount" 
+          color="amber" 
+          description="Action Required"
+        >
+          <template #icon>
+            <AlertCircle :size="24" />
+          </template>
+        </StatsCard>
 
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
-          <div class="flex items-center justify-between mb-4">
-            <span class="text-gray-500 font-medium">Online Machines</span>
-            <div class="p-2 bg-green-50 rounded-lg text-green-600">
-              <Server :size="24" />
-            </div>
-          </div>
-          
-          <div class="text-3xl font-bold text-gray-900 mb-1">
-             <span v-if="machineLoading && machines.length === 0" class="text-lg text-gray-400">Syncing...</span>
-             <span v-else>{{ onlineMachinesCount }}</span>
-          </div>
-          <div class="text-xs text-green-600 font-medium">Active RVM Units</div>
-        </div>
+        <StatsCard 
+          title="Online Machines" 
+          :value="machineLoading ? 'Syncing...' : onlineMachinesCount" 
+          color="green" 
+          description="Active RVM Units"
+        >
+          <template #icon>
+            <Server :size="24" />
+          </template>
+        </StatsCard>
 
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
-          <div class="flex items-center justify-between mb-4">
-            <span class="text-gray-500 font-medium">Total Points Earned</span>
-            <div class="p-2 bg-blue-50 rounded-lg text-blue-600">
-              <Coins :size="24" />
-            </div>
-          </div>
-          <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(totalPoints) }}</div>
-          <div class="text-xs text-blue-600 font-medium">Lifetime Distribution</div>
-        </div>
+        <StatsCard 
+          title="Total Points Earned" 
+          :value="formatNumber(totalPoints)" 
+          color="blue" 
+          description="Lifetime Distribution"
+        >
+          <template #icon>
+            <Coins :size="24" />
+          </template>
+        </StatsCard>
+
       </div>
 
       <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
