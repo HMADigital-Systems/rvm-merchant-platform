@@ -17,6 +17,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   // 1. Initialize: Check session & Load Profile
   async function initializeAuth() {
+
+    if (window.location.pathname === '/login') {
+        loading.value = false;
+        return; 
+    }
+
     loading.value = true;
     const { data } = await supabase.auth.getSession();
     
@@ -84,12 +90,33 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    await supabase.auth.signOut();
-    user.value = null;
-    session.value = null;
-    role.value = null;
-    merchantId.value = null;
-    router.push('/login');
+    try {
+      // 1. Try to tell Supabase we are leaving (Best effort)
+      const { error } = await supabase.auth.signOut();
+      if (error) console.warn("Supabase logout error (ignoring):", error.message);
+    } catch (err) {
+      console.warn("Logout network error (ignoring):", err);
+    } finally {
+      // 2. NUCLEAR CLEANUP: Force wipe everything locally
+      console.log("Cleaning up local session...");
+      
+      // A. Reset Store State
+      user.value = null;
+      session.value = null;
+      role.value = null;
+      merchantId.value = null;
+
+      // B. Wipe Local Storage (This removes the persisted token)
+      // This ensures that refreshing the page won't auto-login again
+      localStorage.clear(); 
+      // OR if you want to be specific: 
+      // const projectRef = 'piwthttkmkndflmqvxov'; // Your Supabase Ref from URL
+      // localStorage.removeItem(`sb-${projectRef}-auth-token`);
+
+      // C. Force Redirect
+      console.log("Redirecting to login...");
+      router.replace('/login'); // .replace() prevents 'Back' button from returning
+    }
   }
 
   return { user, session, role, merchantId, loading, initializeAuth, login, register, logout };

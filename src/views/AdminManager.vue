@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { Trash2, UserPlus, Shield } from 'lucide-vue-next';
 import { supabase } from '../services/supabase';
+import { useAuthStore } from '../stores/auth';
 
 interface AdminUser {
   id: string;
@@ -16,12 +17,16 @@ const newRole = ref('VIEWER');
 const showAddModal = ref(false);
 const loading = ref(true);
 
+const auth = useAuthStore();
+
 // 1. Fetch Real Data from Supabase
 async function fetchAdmins() {
+  if (!auth.merchantId) return;
   loading.value = true;
   const { data, error } = await supabase
     .from('app_admins')
     .select('*')
+    .eq('merchant_id', auth.merchantId)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -32,21 +37,29 @@ async function fetchAdmins() {
   loading.value = false;
 }
 
-// 2. Add New Admin to Supabase
+// 2. Add New Admin (Linked to Merchant)
 const addAdmin = async () => {
   if (!newEmail.value) return;
+  if (!auth.merchantId) {
+      alert("Error: Merchant ID missing.");
+      return;
+  }
 
   const { data, error } = await supabase
     .from('app_admins')
     .insert([
-      { email: newEmail.value, role: newRole.value }
+      { 
+          email: newEmail.value, 
+          role: newRole.value,
+          merchant_id: auth.merchantId 
+      }
     ])
     .select();
 
   if (error) {
     alert('Failed to add admin: ' + error.message);
   } else if (data) {
-    admins.value.unshift(data[0] as AdminUser); // Add to list immediately
+    admins.value.unshift(data[0] as AdminUser);
     newEmail.value = '';
     showAddModal.value = false;
   }
@@ -68,9 +81,14 @@ const removeAdmin = async (id: string) => {
   }
 };
 
-// Load data when page opens
 onMounted(() => {
-  fetchAdmins();
+  // Wait a tick to ensure auth store is ready if page refresh happened
+  if (auth.merchantId) {
+      fetchAdmins();
+  } else {
+      // Retry once if loading (simple debounce)
+      setTimeout(() => { if (auth.merchantId) fetchAdmins() }, 500);
+  }
 });
 </script>
 
