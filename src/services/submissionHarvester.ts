@@ -21,7 +21,7 @@ export const runHarvester = async () => {
         // We no longer need to fetch merchant rates here, just the merchant_id for linkage
         const { data: machines } = await supabase
             .from('machines')
-            .select('device_no, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco, rate_glass, config_bin_1, config_bin_2');
+            .select('device_no, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco, config_bin_1, config_bin_2');
             
         const machineMap: Record<string, any> = {};
         machines?.forEach(m => {
@@ -65,7 +65,7 @@ export const runHarvester = async () => {
                 }
 
                 // ---------------------------------------------------------
-                // 🔥 NEW: CALCULATE VALUE USING MACHINE SPECIFIC RATES
+                // NEW: CALCULATE VALUE USING MACHINE SPECIFIC RATES
                 // ---------------------------------------------------------
                 let rate = 0;
                 const typeKey = wasteType.toLowerCase();
@@ -76,9 +76,6 @@ export const runHarvester = async () => {
                 } 
                 else if (typeKey.includes('uco') || typeKey.includes('oil') || typeKey.includes('minyak')) {
                     rate = Number(machine.rate_uco || 0);
-                }
-                else if (typeKey.includes('glass') || typeKey.includes('kaca')) {
-                    rate = Number(machine.rate_glass || 0);
                 }
                 else if (typeKey.includes('plastic') || typeKey.includes('plastik') || typeKey.includes('botol')) {
                     rate = Number(machine.rate_plastic || 0);

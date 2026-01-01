@@ -12,8 +12,6 @@ export interface Merchant {
   is_active: boolean;
   contact_email?: string;
   created_at: string;
-  rate_paper: number;
-  rate_uco: number;
 }
 
 export interface MerchantWallet {
@@ -95,10 +93,10 @@ export interface Withdrawal {
 
 export interface Machine {
   id: number; // Changed to number to match BigInt in DB, or keep string if using string ID
-  device_no: string; // ✅ Standardized to snake_case matches DB (check your DB column name)
+  device_no: string; // Standardized to snake_case matches DB (check your DB column name)
   deviceNo?: string; // Legacy support for API mapping
   
-  merchant_id?: string; // ✅ SaaS: Who owns this machine?
+  merchant_id?: string; // SaaS: Who owns this machine?
   
   name: string;      // Replaces deviceName
   address?: string;
@@ -107,6 +105,14 @@ export interface Machine {
   // Status
   is_active: boolean;
   zone?: string;
+
+  // NEW: Rates are now here (Source of Truth)
+  config_bin_1: string;
+  config_bin_2: string;
+  rate_plastic: number;
+  rate_can: number;
+  rate_paper: number;
+  rate_uco: number;
   
   // Joined Data
   merchant?: Merchant; 
@@ -118,7 +124,7 @@ export interface SubmissionReview {
   
   // Ownership
   user_id: string;
-  merchant_id?: string; // ✅ SaaS: Which merchant pays for this?
+  merchant_id?: string; // SaaS: Which merchant pays for this?
   
   phone: string;
   device_no: string;

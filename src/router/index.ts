@@ -11,6 +11,8 @@ import Login from '../views/Login.vue';
 import AdminManager from '../views/AdminManager.vue';
 import MerchantSettings from '../views/MerchantSettings.vue';
 
+const MerchantsManager = () => import('../views/SuperAdmin/Merchants.vue');
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -18,7 +20,7 @@ const router = createRouter({
       path: '/login', 
       name: 'login', 
       component: Login,
-      meta: { hideSidebar: true, requiresAuth: false } // ✅ Public Page
+      meta: { hideSidebar: true, requiresAuth: false } //  Public Page
     },
     {
       path: '/',
@@ -72,25 +74,32 @@ const router = createRouter({
     name: 'Settings',
     component: MerchantSettings,
     meta: { requiresAuth: true }
-  }
+    },
+    // === NEW SUPER ADMIN ROUTES ===
+    {
+      path: '/super-admin/merchants',
+      name: 'SuperAdminMerchants',
+      component: MerchantsManager,
+      meta: { requiresAuth: true, requiresSuperAdmin: true } //  New Meta Tag
+    },
   ]
 });
 
 // ------------------------------------------------------------------
-// 🛡️ THE GATEKEEPER (Navigation Guard)
+//  THE GATEKEEPER (Navigation Guard)
 // ------------------------------------------------------------------
 router.beforeEach(async (to, _from, next) => {
   const { data: { session } } = await supabase.auth.getSession();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
-  const isLoginPage = to.name === 'login';
+  const requiresSuperAdmin = to.matched.some(record => record.meta.requiresSuperAdmin); // Check tag
 
   if (requiresAuth && !session) {
     next({ name: 'login' });
-  } else if (isLoginPage && session) {
-    next({ name: 'dashboard' });
-  } else if (requiresAuth && session) {
-    // --- NEW CHECK START ---
-    // Check if user is actually an admin before letting them in
+    return;
+  }
+
+  if (session) {
+    // Check Admin Role
     const { data: admin } = await supabase
       .from('app_admins')
       .select('role')
@@ -98,17 +107,21 @@ router.beforeEach(async (to, _from, next) => {
       .single();
 
     if (!admin) {
-      // User exists but is NOT an admin -> Kick to login
+      // Not in whitelist -> Kick out
       await supabase.auth.signOut();
       next({ name: 'login' });
-    } else {
-      // User is admin -> Proceed
-      next();
+      return;
     }
-    // --- NEW CHECK END ---
-  } else {
-    next();
+
+    // 🔥 NEW: Super Admin Check
+    if (requiresSuperAdmin && admin.role !== 'SUPER_ADMIN') {
+      alert("⛔ Access Denied: Super Admin Only");
+      next({ name: 'dashboard' }); // Send back to safety
+      return;
+    }
   }
+
+  next();
 });
 
 export default router;

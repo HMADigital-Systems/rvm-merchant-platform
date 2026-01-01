@@ -48,55 +48,67 @@ export const useMachineStore = defineStore('machines', () => {
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
   // --- ACTION: Fetch Machines ---
+  // --- ACTION: Fetch Machines ---
   const fetchMachines = async (forceRefresh = false) => {
     const auth = useAuthStore();
     
-    // 1. SECURITY WIPE: If no user is logged in, clear everything.
-    if (!auth.merchantId) {
-      console.warn("MachineStore: No Merchant ID. Clearing data.");
+    // 1. IDENTIFY ROLE
+    const isPlatformOwner = auth.role === 'SUPER_ADMIN' && !auth.merchantId;
+    
+    // 2. SECURITY WIPE
+    // If not logged in at all, or if strictly a merchant without an ID, clear data.
+    if (!auth.merchantId && !isPlatformOwner) {
+      console.warn("MachineStore: No Access Context. Clearing data.");
       machines.value = [];
       lastFetchedMerchantId.value = null;
       return;
     }
 
-    // 2. CONTEXT CHECK: Did we switch accounts?
-    if (lastFetchedMerchantId.value !== auth.merchantId) {
-      console.log("MachineStore: Merchant switched! Wiping old data...");
-      machines.value = []; // <--- 🔥 THIS LINE FIXES YOUR BUG
-      lastFetchedMerchantId.value = null;
-      forceRefresh = true; // Force a new fetch
+    // 3. CONTEXT CHECK
+    // If we switch from "Global" to "Specific Merchant" or vice versa
+    const currentContextId = auth.merchantId || 'GLOBAL';
+    if (lastFetchedMerchantId.value !== currentContextId) {
+      machines.value = [];
+      forceRefresh = true;
     }
 
-    // 3. CACHE CHECK
+    // 4. CACHE CHECK
     const now = Date.now();
     if (!forceRefresh && machines.value.length > 0 && (now - lastUpdated.value < CACHE_DURATION)) {
-      return; // Return cached data ONLY if it belongs to the current merchant
+      return; 
     }
 
     loading.value = true;
     const tempMachines: DashboardMachine[] = [];
 
     try {
-      // 4. FETCH DATA (Strictly for current Merchant)
-      const { data: dbMachines, error } = await supabase
+      // 5. QUERY BUILDER
+      // Start with base query
+      let query = supabase
         .from('machines')
-        .select('*, merchant:merchants(config_bin_1, config_bin_2)') 
-        .eq('merchant_id', auth.merchantId) // Strict Filter
+        .select('*'); // We fetch config_bin_1/2 directly from machines now
+
+      // 🔥 CRITICAL FIX: Only apply merchant filter if NOT Platform Owner
+      if (!isPlatformOwner && auth.merchantId) {
+         query = query.eq('merchant_id', auth.merchantId);
+      }
+
+      // Execute Query
+      const { data: dbMachines, error } = await query
         .eq('is_active', true)
         .order('zone', { ascending: true });
 
       if (error) throw error;
 
-      // 5. UPDATE TRACKER
-      // We claim this data belongs to the current user
-      lastFetchedMerchantId.value = auth.merchantId;
+      // 6. UPDATE TRACKER
+      lastFetchedMerchantId.value = currentContextId;
 
       if (!dbMachines) {
          machines.value = [];
          return;
       }
 
-      // --- LOOP LOGIC (Same as before) ---
+      // --- LOOP LOGIC ---
       for (const dbMachine of dbMachines) {
         let apiRes = null;
         let isOnline = false;
@@ -120,16 +132,15 @@ export const useMachineStore = defineStore('machines', () => {
         let percent1 = bin1Config.rate ? Math.round(Number(bin1Config.rate)) : 0;
         if (isFull1) percent1 = 100;
         else if (percent1 === 0 && weight1 > 0) {
-             // Heuristic calculation if rate is missing
-             const label1 = mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.merchant?.config_bin_1 || "Bin 1").label;
+             const label1 = mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.config_bin_1 || "Bin 1").label;
              const capacity = (label1.includes("Oil") || label1.includes("UCO")) ? 400 : 25;
              percent1 = Math.round((weight1 / capacity) * 100);
              if (percent1 > 100) percent1 = 100;
         }
 
         const bin1 = {
-            label: mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.merchant?.config_bin_1 || "Bin 1").label,
-            color: mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.merchant?.config_bin_1 || "Bin 1").color,
+            label: mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.config_bin_1 || "Bin 1").label,
+            color: mapTypeToLabel(bin1Config.rubbishTypeName || dbMachine.config_bin_1 || "Bin 1").color,
             weight: weight1.toFixed(2),
             percent: percent1,
             isFull: isFull1 
@@ -148,8 +159,8 @@ export const useMachineStore = defineStore('machines', () => {
         }
 
         const bin2 = {
-            label: mapTypeToLabel(bin2Config.rubbishTypeName || dbMachine.merchant?.config_bin_2 || "Bin 2").label,
-            color: mapTypeToLabel(bin2Config.rubbishTypeName || dbMachine.merchant?.config_bin_2 || "Bin 2").color,
+            label: mapTypeToLabel(bin2Config.rubbishTypeName || dbMachine.config_bin_2 || "Bin 2").label,
+            color: mapTypeToLabel(bin2Config.rubbishTypeName || dbMachine.config_bin_2 || "Bin 2").color,
             weight: weight2.toFixed(2),
             percent: percent2,
             isFull: isFull2

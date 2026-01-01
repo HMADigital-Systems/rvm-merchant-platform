@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2, Settings } from 'lucide-vue-next';
+import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2, Settings, Globe } from 'lucide-vue-next';
 
 const route = useRoute();
 const auth = useAuthStore();
@@ -81,6 +81,18 @@ const handleLogout = async () => {
         <Shield :size="20" /> 
         Admin Access
       </RouterLink>
+
+      <div v-if="auth.role === 'SUPER_ADMIN' && !auth.merchantId" class="pt-6 mt-2 border-t border-gray-100">
+        <p class="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Platform Owner</p>
+        
+        <RouterLink to="/super-admin/merchants" 
+          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+          :class="isActive('/super-admin/merchants') ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+        >
+          <Globe :size="20" />
+          Manage Clients
+        </RouterLink>
+      </div>
     </nav>
 
     <div class="p-4 border-t border-gray-100 space-y-2">

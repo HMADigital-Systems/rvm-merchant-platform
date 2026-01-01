@@ -10,10 +10,16 @@ export function useUserList() {
 
   // 1. Fetch Users + Wallet for Current Merchant
   const fetchUsers = async () => {
-    if (!auth.merchantId) return;
+    // 1. Define Platform Owner Logic
+    const isPlatformOwner = auth.role === 'SUPER_ADMIN' && !auth.merchantId;
+    
+    // 2. Security: If not a Merchant AND not the Platform Owner, stop.
+    if (!auth.merchantId && !isPlatformOwner) return;
+
     loading.value = true;
     try {
-        const { data, error } = await supabase
+        // 3. Start building the query
+        let query = supabase
             .from('users')
             .select(`
                 *,
@@ -23,15 +29,28 @@ export function useUserList() {
                     merchant_id
                 )
             `)
-            .eq('merchant_wallets.merchant_id', auth.merchantId)
             .order('created_at', { ascending: false });
+
+        // 4. Apply Filter: Only filter by merchant_id if NOT Platform Owner
+        if (!isPlatformOwner && auth.merchantId) {
+            query = query.eq('merchant_wallets.merchant_id', auth.merchantId); 
+        }
+
+        // 5. Execute Query (Once)
+        const { data, error } = await query;
 
         if (error) throw error;
 
-        // Map data to flatten the wallet structure
+        // 6. Map Data
         users.value = data.map(u => {
-            // Find the wallet belonging to THIS merchant
-            const wallet = u.merchant_wallets?.find((w: any) => w.merchant_id === auth.merchantId);
+            let wallet;
+            if (auth.merchantId) {
+                wallet = u.merchant_wallets?.find((w: any) => w.merchant_id === auth.merchantId);
+            } else {
+                // Platform Owner: Just grab the first wallet found for now
+                wallet = u.merchant_wallets?.[0]; 
+            }
+
             return {
                 ...u,
                 balance: wallet ? Number(wallet.current_balance) : 0,
@@ -46,7 +65,6 @@ export function useUserList() {
     }
   };
 
-  // 2. Adjust Balance
   // 2. Adjust Balance (Updated with Category)
   const adjustBalance = async (userId: string, amount: number, note: string, category: 'ADJUSTMENT' | 'WITHDRAWAL') => {
       if (!userId || amount === 0) return;
