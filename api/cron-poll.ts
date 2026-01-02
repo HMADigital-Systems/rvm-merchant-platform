@@ -1,23 +1,21 @@
-// api/cron-poll.ts
 import { createClient } from '@supabase/supabase-js';
-import { getMachineConfig } from '../src/services/autogcm'; // Ensure this path is correct for serverless
 
-// Initialize Supabase (Service Role is crucial for server-side updates)
+// Initialize Supabase
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! 
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const APP_URL = 'https://rvm-merchant-platform.vercel.app';
+
 export default async function handler(req, res) {
-  // Security Check (Prevent random people from triggering it)
+  // 1. Security Check
   if (req.query.key !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    console.log("⏰ Starting Machine Polling...");
-
-    // 1. Fetch All Active Machines from DB
+    // 2. Fetch Active Machines
     const { data: machines, error } = await supabase
       .from('machines')
       .select('*')
@@ -28,31 +26,39 @@ export default async function handler(req, res) {
     let updatesCount = 0;
     let cleaningEvents = 0;
 
-    // 2. Loop through each machine
+    // 3. Loop through machines
     for (const machine of machines) {
-      // Fetch Live Data from Vendor API
-      const apiRes = await getMachineConfig(machine.device_no);
-      
-      if (!apiRes || apiRes.code !== 200) {
-        console.warn(`Failed to fetch API for ${machine.device_no}`);
-        continue;
-      }
+      try {
+        const proxyRes = await fetch(`${APP_URL}/api/proxy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                endpoint: '/api/open/v1/device/position',
+                method: 'GET',
+                params: { deviceNo: machine.device_no }
+            })
+        });
 
-      const bins = apiRes.data || [];
-      
-      // --- BIN 1 PROCESSING ---
-      const bin1 = bins.find((b: any) => b.positionNo === 1);
-      if (bin1) {
-        await processBin(machine, 1, bin1.weight, machine.current_bag_weight);
-      }
+        const apiRes = await proxyRes.json();
+        const bins = (apiRes && apiRes.data) ? apiRes.data : [];
 
-      // --- BIN 2 PROCESSING ---
-      const bin2 = bins.find((b: any) => b.positionNo === 2);
-      if (bin2) {
-        await processBin(machine, 2, bin2.weight, machine.current_weight_2);
+        // --- BIN 1 PROCESSING ---
+        const bin1 = Array.isArray(bins) ? bins.find((b: any) => b.positionNo === 1) : null;
+        if (bin1) {
+          await processBin(machine, 1, bin1.weight, machine.current_bag_weight);
+        }
+
+        // --- BIN 2 PROCESSING ---
+        const bin2 = Array.isArray(bins) ? bins.find((b: any) => b.positionNo === 2) : null;
+        if (bin2) {
+          await processBin(machine, 2, bin2.weight, machine.current_weight_2);
+        }
+
+        updatesCount++;
+
+      } catch (innerErr) {
+        console.error(`Error processing ${machine.device_no}:`, innerErr);
       }
-      
-      updatesCount++;
     }
 
     return res.status(200).json({ 
@@ -62,28 +68,24 @@ export default async function handler(req, res) {
     });
 
   } catch (err: any) {
-    console.error("Cron Job Failed:", err.message);
     return res.status(500).json({ error: err.message });
   }
 
-  // Helper Function to process logic per bin
+  // --- HELPER FUNCTION ---
   async function processBin(machine: any, position: number, liveWeightStr: string, dbWeightNum: number) {
       const liveWeight = Number(liveWeightStr || 0);
       const dbWeight = Number(dbWeightNum || 0);
-      
-      // THRESHOLD: How much weight drop counts as a "Cleaning"? (e.g. > 2kg drop)
       const DROP_THRESHOLD = 2.0; 
-      
-      // LOGIC: Did weight drop significantly?
+
+      // 1. Detect Drop (Cleaning Event)
       if (dbWeight - liveWeight > DROP_THRESHOLD) {
-          console.log(`🧹 CLEANING DETECTED! ${machine.device_no} Bin ${position}: ${dbWeight}kg -> ${liveWeight}kg`);
+          console.log(`🧹 Cleaning Detected: ${machine.device_no}`);
           
-          // 1. Record the Event
           await supabase.from('cleaning_records').insert({
               device_no: machine.device_no,
               merchant_id: machine.merchant_id,
               waste_type: position === 1 ? machine.config_bin_1 : machine.config_bin_2,
-              bag_weight_collected: dbWeight, // We record what was THERE before it was emptied
+              bag_weight_collected: dbWeight,
               cleaned_at: new Date().toISOString(),
               cleaner_name: 'System Detected (Auto)',
               status: 'PENDING'
@@ -92,8 +94,8 @@ export default async function handler(req, res) {
           cleaningEvents++;
       }
 
-      // 2. Update DB with new baseline (Always sync)
-      // Only update if difference is noticeable (> 0.05kg) to reduce DB writes
+      // 2. Update Machine Weight in DB (Crucial Step!)
+      // We update the DB to match the new "Live" weight so the cycle resets
       if (Math.abs(liveWeight - dbWeight) > 0.05) {
           const updateField = position === 1 ? 'current_bag_weight' : 'current_weight_2';
           await supabase
