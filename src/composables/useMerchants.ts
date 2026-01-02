@@ -1,12 +1,16 @@
-// src/composables/useMerchants.ts
 import { ref } from 'vue';
 import { supabase } from '../services/supabase';
-import type { Merchant } from '../types'; // Ensure you have this type defined or define it locally
+import type { Merchant } from '../types'; 
 
-// Extend the interface to include what we need locally
 export interface AdminMerchant extends Merchant {
-  admin_count?: number;
-  machines?: { device_no: string; name: string }[];
+  admins?: { id: string; email: string }[]; 
+  machines?: { 
+      device_no: string; 
+      name: string; 
+      rate_plastic: number; 
+      rate_paper: number; 
+      rate_uco: number; 
+  }[];
 }
 
 export function useMerchants() {
@@ -21,14 +25,18 @@ export function useMerchants() {
     try {
       const { data, error: err } = await supabase
         .from('merchants')
-        .select('*, app_admins(count), machines(device_no, name)')
+        .select(`
+            *, 
+            app_admins(id, email), 
+            machines(device_no, name, rate_plastic, rate_paper, rate_uco)
+        `) 
         .order('created_at', { ascending: false });
 
       if (err) throw err;
 
       merchants.value = data.map((m: any) => ({
         ...m,
-        admin_count: m.app_admins?.[0]?.count || 0,
+        admins: m.app_admins || [],
         machines: m.machines || []
       }));
     } catch (err: any) {
@@ -42,60 +50,60 @@ export function useMerchants() {
   const saveMerchant = async (form: any, isEditMode: boolean, merchantId?: string) => {
     loading.value = true;
     try {
-      // A. Prepare Payload
+      // A. Update Merchant Basic Info
       const payload = {
         name: form.name,
         currency_symbol: form.currency,
-        rate_plastic: form.rate_plastic,
-        rate_can: form.rate_can,
-        rate_glass: form.rate_glass,
         is_active: form.is_active ?? true
       };
 
       let activeMerchantId = merchantId;
 
       if (isEditMode && merchantId) {
-        // --- UPDATE MODE ---
-        const { error: uError } = await supabase
-          .from('merchants')
-          .update(payload)
-          .eq('id', merchantId);
+        const { error: uError } = await supabase.from('merchants').update(payload).eq('id', merchantId);
         if (uError) throw uError;
       } else {
-        // --- CREATE MODE ---
-        const { data: mData, error: iError } = await supabase
-          .from('merchants')
-          .insert(payload)
-          .select()
-          .single();
+        const { data: mData, error: iError } = await supabase.from('merchants').insert(payload).select().single();
         if (iError) throw iError;
         activeMerchantId = mData.id;
+      }
 
-        // Create the Initial Admin for this new merchant
-        if (form.adminEmail) {
+      // B. Create New Admin (If provided)
+      if (form.newAdminEmail && activeMerchantId) {
           const { error: aError } = await supabase.from('app_admins').insert({
-            email: form.adminEmail,
+            email: form.newAdminEmail,
             role: 'SUPER_ADMIN',
             merchant_id: activeMerchantId
           });
-          if (aError) throw aError;
-        }
+          if (aError && aError.code !== '23505') throw aError;
       }
 
-      // B. Handle Machine Assignment (Add Only)
-      // If the user entered machine IDs, we claim them for this merchant.
-      if (form.assignedMachines && form.assignedMachines.length > 0 && activeMerchantId) {
-        // Get list of device_nos to update
-        const devicesToAssign = form.assignedMachines.split(',').map((s: string) => s.trim()).filter((s: string) => s);
-        
-        if (devicesToAssign.length > 0) {
-            const { error: mError } = await supabase
-              .from('machines')
-              .update({ merchant_id: activeMerchantId })
-              .in('device_no', devicesToAssign);
-              
-            if (mError) throw new Error("Merchant saved, but failed to assign machines: " + mError.message);
-        }
+      if (activeMerchantId) {
+          // C. Assign NEW Machines (from Textarea)
+          if (form.assignedMachines && form.assignedMachines.length > 0) {
+             const devices = form.assignedMachines.split(',').map((s: string) => s.trim()).filter((s: string) => s);
+             if (devices.length > 0) {
+                 // Assign them. Default rates 0.
+                 await supabase
+                    .from('machines')
+                    .update({ merchant_id: activeMerchantId })
+                    .in('device_no', devices);
+             }
+          }
+
+          // D. Update Rates for EXISTING Machines (Per Machine Logic)
+          if (form.machines && form.machines.length > 0) {
+              for (const m of form.machines) {
+                  // If it's UCO, plastic/paper might be irrelevant, but harmless to save.
+                  // If it's RVM, UCO rate is irrelevant.
+                  await supabase.from('machines').update({
+                      rate_plastic: m.rate_plastic,
+                      rate_can: m.rate_plastic, // Sync Combo
+                      rate_paper: m.rate_paper,
+                      rate_uco: m.rate_uco
+                  }).eq('device_no', m.device_no);
+              }
+          }
       }
 
       await fetchMerchants();
@@ -107,7 +115,21 @@ export function useMerchants() {
     }
   };
 
-  // 3. Toggle Status
+  // 3. Delete Admin (Immediate Action)
+  const deleteMerchantAdmin = async (adminId: string) => {
+      if (!confirm("Are you sure you want to remove this admin?")) return false;
+      
+      const { error: err } = await supabase.from('app_admins').delete().eq('id', adminId);
+      if (err) {
+          alert("Error: " + err.message);
+          return false;
+      }
+      // Refresh local data
+      await fetchMerchants();
+      return true;
+  };
+
+  // 4. Toggle Status
   const toggleStatus = async (merchant: AdminMerchant) => {
     try {
       const newVal = !merchant.is_active;
@@ -128,6 +150,7 @@ export function useMerchants() {
     error,
     fetchMerchants, 
     saveMerchant, 
+    deleteMerchantAdmin,
     toggleStatus 
   };
 }

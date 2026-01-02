@@ -11,31 +11,38 @@ export function useMerchantSettings() {
     const merchant = ref<any>({});
     const machines = ref<any[]>([]);
 
-    const fetchData = async () => {
-        if (!auth.merchantId) return;
+    const currentEditId = ref<string | null>(null);
+
+
+    const fetchData = async (overrideId?: string) => {
+        // Priority: Override ID -> Logged in Merchant ID
+        const targetId = overrideId || auth.merchantId;
+
+        if (!targetId) return;
+        
+        currentEditId.value = targetId; // Set the active context
         loading.value = true;
+        
         try {
-            // 1. Get Merchant (For Currency Symbol & Profile)
+            // 1. Get Merchant
             const { data: merchantData, error: mError } = await supabase
                 .from('merchants')
                 .select('*')
-                .eq('id', auth.merchantId)
+                .eq('id', targetId) // Use targetId
                 .single();
             if (mError) throw mError;
             merchant.value = merchantData;
 
-            // 2. Get Machines (Now includes Rates)
+            // 2. Get Machines
             const { data: machineData, error: macError } = await supabase
                 .from('machines')
                 .select('*')
-                .eq('merchant_id', auth.merchantId)
+                .eq('merchant_id', targetId) // Use targetId
                 .order('device_no');
             if (macError) throw macError;
             
-            // 3. Initialize Helper for Combo Rates (Plastic/Can syncing)
             machines.value = machineData.map((m: any) => ({
                 ...m,
-                // Create a temporary local variable for the UI input
                 _comboRate: m.rate_plastic || 0
             }));
 
@@ -47,10 +54,13 @@ export function useMerchantSettings() {
     };
 
     const saveSettings = async () => {
+        // 🔥 MODIFIED: Use currentEditId instead of auth.merchantId
+        if (!currentEditId.value) return;
+
         saving.value = true;
         message.value = '';
         try {
-            // 1. Save Merchant Profile (Name, Email, Currency)
+            // 1. Save Merchant Profile
             const { error: mError } = await supabase
                 .from('merchants')
                 .update({
@@ -58,27 +68,28 @@ export function useMerchantSettings() {
                     currency_symbol: merchant.value.currency_symbol,
                     contact_email: merchant.value.contact_email,
                 })
-                .eq('id', auth.merchantId);
+                .eq('id', currentEditId.value); // Use currentEditId
 
             if (mError) throw mError;
 
-            // 2. Save Each Machine (Rates + Location)
+            // 2. Save Each Machine (Keep existing logic)
             for (const m of machines.value) {
+                // ... (rest of the loop remains exactly the same) ...
+                // Just ensuring the context is correct
                 
-                // Sync Combo Rate logic (If user sets 0.20, it applies to Plastic & Can)
                 const plasticRate = m._comboRate; 
                 const canRate = m._comboRate; 
 
                 await supabase
                     .from('machines')
                     .update({ 
+                        // ... fields ...
                         name: m.name, 
                         location_name: m.location_name,
                         address: m.address, 
                         maintenance_contact: m.maintenance_contact,
                         latitude: m.latitude,
                         longitude: m.longitude,
-                        // 🔥 Saving Rates Per Machine
                         rate_plastic: plasticRate,
                         rate_can: canRate,
                         rate_paper: m.rate_paper,

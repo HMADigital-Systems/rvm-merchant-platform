@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router';
+import { computed } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2, Settings, Globe } from 'lucide-vue-next';
 
@@ -14,6 +15,16 @@ const handleLogout = async () => {
     console.error("Logout failed", err);
   }
 };
+
+const settingsPath = computed(() => {
+  // If Platform Owner -> Go to Master Config
+  if (auth.role === 'SUPER_ADMIN' && !auth.merchantId) {
+    return '/super-admin/config';
+  }
+  // Else -> Go to Standard Merchant Settings
+  return '/settings';
+});
+
 </script>
 
 <template>
@@ -96,13 +107,14 @@ const handleLogout = async () => {
     </nav>
 
     <div class="p-4 border-t border-gray-100 space-y-2">
-      <RouterLink to="/settings" 
-        class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
-        :class="isActive('/settings') ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
-      >
+      <RouterLink 
+          :to="settingsPath" 
+          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+          :class="isActive(settingsPath) ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+        >
           <Settings :size="20" />
-          <span>Settings</span>
-      </RouterLink>
+          Settings
+        </RouterLink>
 
       <button 
         @click="handleLogout"

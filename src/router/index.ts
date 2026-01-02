@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { supabase } from '../services/supabase'; // Import Supabase directly for speed
 
+
 // Import your views
 import Dashboard from '../views/Dashboard.vue';
 import Withdrawals from '../views/Withdrawal.vue';
@@ -12,6 +13,7 @@ import AdminManager from '../views/AdminManager.vue';
 import MerchantSettings from '../views/MerchantSettings.vue';
 
 const MerchantsManager = () => import('../views/SuperAdmin/Merchants.vue');
+const ManageClientSettings = () => import('../views/SuperAdmin/ManageClientSettings.vue');
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -81,6 +83,12 @@ const router = createRouter({
       name: 'SuperAdminMerchants',
       component: MerchantsManager,
       meta: { requiresAuth: true, requiresSuperAdmin: true } //  New Meta Tag
+    },
+    {
+      path: '/super-admin/config', // New path
+      name: 'SuperAdminConfig',
+      component: ManageClientSettings,
+      meta: { requiresAuth: true, requiresSuperAdmin: true }
     },
   ]
 });

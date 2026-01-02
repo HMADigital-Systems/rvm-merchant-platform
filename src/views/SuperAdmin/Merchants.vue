@@ -1,17 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { Building2, UserPlus, MonitorSmartphone } from 'lucide-vue-next';
+import { Building2, UserPlus, MonitorSmartphone, User } from 'lucide-vue-next';
 import { useMerchants, type AdminMerchant } from '../../composables/useMerchants';
 import MerchantModal from '../../components/MerchantModal.vue';
 
-// 1. Init Logic
-const { merchants, loading, fetchMerchants, saveMerchant, toggleStatus } = useMerchants();
+const { merchants, loading, fetchMerchants, saveMerchant, deleteMerchantAdmin, toggleStatus } = useMerchants();
 
-// 2. Modal State
 const showModal = ref(false);
 const editingMerchant = ref<AdminMerchant | null>(null);
 
-// 3. Actions
 const openCreateModal = () => {
   editingMerchant.value = null;
   showModal.value = true;
@@ -28,15 +25,24 @@ const handleModalSubmit = async (formData: any) => {
 
   if (!formData.name) return alert("Company Name is required");
 
-  // Call Composable
   const res = await saveMerchant(formData, isEdit, merchantId);
 
   if (res.success) {
-    alert(isEdit ? "✅ Changes Saved!" : "✅ Client Created Successfully!");
+    alert(isEdit ? "✅ Changes Saved & Fleet Updated!" : "✅ Client Created Successfully!");
     showModal.value = false;
   } else {
     alert("❌ Error: " + res.message);
   }
+};
+
+const handleDeleteAdmin = async (adminId: string) => {
+    const success = await deleteMerchantAdmin(adminId);
+    if (success) {
+        // If successful, we need to update the local 'editingMerchant' data so the modal reflects the deletion instantly
+        if (editingMerchant.value && editingMerchant.value.admins) {
+            editingMerchant.value.admins = editingMerchant.value.admins.filter(a => a.id !== adminId);
+        }
+    }
 };
 
 onMounted(() => fetchMerchants());
@@ -67,9 +73,10 @@ onMounted(() => fetchMerchants());
       <table v-else class="w-full text-left">
         <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
           <tr>
-            <th class="px-6 py-4">Company Details</th>
-            <th class="px-6 py-4">Rates (P/C/G)</th>
-            <th class="px-6 py-4">Machines</th>
+            <th class="px-6 py-4">Company</th>
+            <th class="px-6 py-4">Currency</th>
+            <th class="px-6 py-4">Admins</th>
+            <th class="px-6 py-4">Assigned Machines</th>
             <th class="px-6 py-4">Status</th>
             <th class="px-6 py-4 text-right">Actions</th>
           </tr>
@@ -79,18 +86,24 @@ onMounted(() => fetchMerchants());
             
             <td class="px-6 py-4">
               <div class="font-bold text-gray-900">{{ m.name }}</div>
-              <div class="text-xs text-gray-400 mt-0.5">{{ m.currency_symbol }} • {{ m.admin_count }} Admins</div>
+            </td>
+
+            <td class="px-6 py-4 text-sm text-gray-500 font-mono">
+               {{ m.currency_symbol }}
             </td>
 
             <td class="px-6 py-4">
-               <span class="font-mono text-xs bg-slate-100 px-2 py-1 rounded text-slate-600 border border-slate-200">
-                 {{ m.rate_plastic }} / {{ m.rate_can }} / {{ m.rate_glass }}
-               </span>
+               <div v-if="m.admins && m.admins.length > 0" class="space-y-1">
+                 <div v-for="admin in m.admins" :key="admin.id" class="flex items-center text-xs text-gray-600">
+                    <User :size="12" class="mr-1.5 text-gray-400"/> {{ admin.email }}
+                 </div>
+               </div>
+               <span v-else class="text-xs text-gray-400 italic">No admins invited</span>
             </td>
 
             <td class="px-6 py-4">
               <div v-if="m.machines && m.machines.length > 0" class="flex flex-wrap gap-1">
-                <span v-for="machine in m.machines" :key="machine.device_no" class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                <span v-for="machine in m.machines" :key="machine.device_no" class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100" title="Machine ID">
                   <MonitorSmartphone :size="10" class="mr-1"/> {{ machine.device_no }}
                 </span>
               </div>
@@ -129,6 +142,7 @@ onMounted(() => fetchMerchants());
       :editData="editingMerchant"
       @close="showModal = false"
       @submit="handleModalSubmit"
+      @delete-admin="handleDeleteAdmin" 
     />
   </div>
 </template>

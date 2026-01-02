@@ -1,94 +1,49 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { Trash2, UserPlus, Shield } from 'lucide-vue-next';
-import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/auth';
-
-interface AdminUser {
-  id: string;
-  email: string;
-  role: 'SUPER_ADMIN' | 'EDITOR' | 'VIEWER';
-  created_at: string;
-}
-
-const admins = ref<AdminUser[]>([]);
-const newEmail = ref('');
-const newRole = ref('VIEWER');
-const showAddModal = ref(false);
-const loading = ref(true);
+import { useAdmins } from '../composables/useAdmins'; // Import the new composable
 
 const auth = useAuthStore();
+const { admins, loading, fetchAdmins, addAdmin, removeAdmin } = useAdmins();
 
-// 1. Fetch Real Data from Supabase
-async function fetchAdmins() {
-  if (!auth.merchantId) return;
-  loading.value = true;
-  const { data, error } = await supabase
-    .from('app_admins')
-    .select('*')
-    .eq('merchant_id', auth.merchantId)
-    .order('created_at', { ascending: false });
+// Local UI State
+const showAddModal = ref(false);
+const newEmail = ref('');
+const newRole = ref('VIEWER');
 
-  if (error) {
-    console.error('Error fetching admins:', error);
-  } else {
-    admins.value = data as AdminUser[];
-  }
-  loading.value = false;
-}
+const isPlatformOwner = computed(() => auth.role === 'SUPER_ADMIN' && !auth.merchantId);
 
-// 2. Add New Admin (Linked to Merchant)
-const addAdmin = async () => {
-  if (!newEmail.value) return;
-  if (!auth.merchantId) {
-      alert("Error: Merchant ID missing.");
-      return;
-  }
-
-  const { data, error } = await supabase
-    .from('app_admins')
-    .insert([
-      { 
-          email: newEmail.value, 
-          role: newRole.value,
-          merchant_id: auth.merchantId 
-      }
-    ])
-    .select();
-
-  if (error) {
-    alert('Failed to add admin: ' + error.message);
-  } else if (data) {
-    admins.value.unshift(data[0] as AdminUser);
-    newEmail.value = '';
-    showAddModal.value = false;
-  }
+const handleAddAdmin = async () => {
+    const res = await addAdmin(newEmail.value, newRole.value);
+    if (res.success) {
+        newEmail.value = '';
+        showAddModal.value = false;
+    } else {
+        alert("Failed to add admin: " + res.message);
+    }
 };
 
-// 3. Remove Admin from Supabase
-const removeAdmin = async (id: string) => {
-  if (!confirm('Revoke access for this admin?')) return;
-
-  const { error } = await supabase
-    .from('app_admins')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    alert('Error removing admin');
-  } else {
-    admins.value = admins.value.filter(a => a.id !== id);
-  }
+const handleRemoveAdmin = async (id: string) => {
+    if (!confirm('Revoke access for this admin?')) return;
+    const res = await removeAdmin(id);
+    if (!res.success) {
+        alert("Error removing admin: " + res.message);
+    }
 };
 
 onMounted(() => {
-  // Wait a tick to ensure auth store is ready if page refresh happened
-  if (auth.merchantId) {
-      fetchAdmins();
-  } else {
-      // Retry once if loading (simple debounce)
-      setTimeout(() => { if (auth.merchantId) fetchAdmins() }, 500);
-  }
+    // Wait for auth to be ready
+    if (auth.loading) {
+        const unwatch = auth.$subscribe((_, state) => {
+            if (!state.loading) {
+                fetchAdmins();
+                unwatch();
+            }
+        });
+    } else {
+        fetchAdmins();
+    }
 });
 </script>
 
@@ -98,9 +53,14 @@ onMounted(() => {
       <div>
          <h1 class="text-2xl font-bold text-gray-900 flex items-center">
            <Shield class="mr-3 text-blue-600" :size="28" />
-           Admin Access
+           {{ isPlatformOwner ? 'Platform Team' : 'Admin Access' }}
          </h1>
-         <p class="text-gray-500 mt-1">Manage who is allowed to login to this dashboard.</p>
+         <p class="text-gray-500 mt-1">
+           {{ isPlatformOwner 
+              ? 'Manage global administrators who can access all merchants.' 
+              : 'Manage who is allowed to login to this dashboard.' 
+           }}
+         </p>
       </div>
       <button 
         @click="showAddModal = !showAddModal"
@@ -131,14 +91,16 @@ onMounted(() => {
             <option value="SUPER_ADMIN">Super Admin</option>
           </select>
         </div>
-        <button @click="addAdmin" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium">
+        <button @click="handleAddAdmin" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium">
           Add to Whitelist
         </button>
       </div>
     </div>
 
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <table class="w-full text-left">
+      <div v-if="loading" class="p-8 text-center text-gray-400">Loading admins...</div>
+
+      <table v-else class="w-full text-left">
         <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
           <tr>
             <th class="px-6 py-4">Admin User</th>
@@ -151,6 +113,7 @@ onMounted(() => {
           <tr v-for="admin in admins" :key="admin.id" class="hover:bg-gray-50">
             <td class="px-6 py-4">
               <div class="font-medium text-gray-900">{{ admin.email }}</div>
+              <div v-if="!admin.merchant_id && isPlatformOwner" class="text-[10px] text-blue-600 font-bold uppercase mt-1">Global Access</div>
             </td>
             <td class="px-6 py-4">
               <span :class="`px-2 py-1 text-xs font-bold rounded-full 
@@ -162,10 +125,13 @@ onMounted(() => {
               {{ new Date(admin.created_at).toLocaleDateString() }}
             </td>
             <td class="px-6 py-4 text-right">
-              <button @click="removeAdmin(admin.id)" class="text-gray-400 hover:text-red-600 transition-colors">
+              <button @click="handleRemoveAdmin(admin.id)" class="text-gray-400 hover:text-red-600 transition-colors">
                 <Trash2 :size="16" />
               </button>
             </td>
+          </tr>
+          <tr v-if="admins.length === 0" class="text-center">
+             <td colspan="4" class="py-8 text-gray-400 text-sm">No administrators found.</td>
           </tr>
         </tbody>
       </table>
