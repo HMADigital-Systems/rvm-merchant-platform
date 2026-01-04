@@ -34,9 +34,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } = data;
 
       // ------------------------------------------------------------------
-      // 1. MACHINE & RATE LOOKUP (FIXED: maybeSingle)
+      // 1. MACHINE & RATE LOOKUP
       // ------------------------------------------------------------------
-      // ⚠️ FIX: Changed .single() to .maybeSingle() to prevent crashes if machine not found
       const { data: machineState, error: machineError } = await supabase
         .from('machines')
         .select('id, current_bag_weight, current_weight_2, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco')
@@ -78,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
       } else {
-          console.warn(`⚠️ Machine not found in DB: ${deviceNo} (Continuing to save record...)`);
+          console.warn(`⚠️ Machine not found in DB: ${deviceNo}`);
       }
 
       // ------------------------------------------------------------------
@@ -115,6 +114,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }).select('id').single();
               if (newUser) internalUserId = newUser.id;
           }
+
+          // 🔥 THE MISSING PIECE: Create Wallet Link so User appears in Frontend 🔥
+          if (internalUserId && merchantId) {
+             // We use upsert to ensure we don't crash if wallet exists
+             await supabase.from('merchant_wallets').upsert({
+                 merchant_id: merchantId,
+                 user_id: internalUserId,
+                 current_balance: 0, // Default to 0, let verification add money
+                 total_earnings: 0
+             }, { onConflict: 'user_id, merchant_id' });
+          }
       }
 
       // ------------------------------------------------------------------
@@ -143,11 +153,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const calculatedMoney = weight * appliedRate;
       const machinePoints = Number(integral || 0);
-      // ✅ If rate found, status becomes VERIFIED
-      const isVerified = machinePoints > 0 || calculatedMoney > 0;
 
       // ------------------------------------------------------------------
-      // 4. SAVE RECORD
+      // 4. SAVE RECORD (Force PENDING)
       // ------------------------------------------------------------------
       const { error: saveError } = await supabase
         .from('submission_reviews')
@@ -160,12 +168,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             device_no: deviceNo,
             waste_type: detectedType,
             api_weight: weight,
-            confirmed_weight: isVerified ? weight : 0,
+            confirmed_weight: 0, 
             calculated_value: calculatedMoney, 
             rate_per_kg: appliedRate,
             machine_given_points: machinePoints,
             photo_url: imgUrl,
-            status: isVerified ? 'VERIFIED' : 'PENDING',
+            status: 'PENDING', // ✅ FORCE PENDING so you can click "Approve" and generate money
             source: 'WEBHOOK',
             submitted_at: new Date().toISOString(),
             bin_weight_snapshot: Number(primaryItem.positionWeight || data.positionWeight || 0)
