@@ -173,7 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             rate_per_kg: appliedRate,
             machine_given_points: machinePoints,
             photo_url: imgUrl,
-            status: 'PENDING', // ✅ FORCE PENDING so you can click "Approve" and generate money
+            status: 'PENDING', // FORCE PENDING so you can click "Approve" and generate money
             source: 'WEBHOOK',
             submitted_at: new Date().toISOString(),
             bin_weight_snapshot: Number(primaryItem.positionWeight || data.positionWeight || 0)
