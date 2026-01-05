@@ -57,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             items.push({ positionId: '1', rubbishName: 'UCO', positionWeight: data.positionWeight });
         }
         for (const item of items) {
-            const binId = String(item.positionId || '1');
+            const binId = String(item.positionId || item.positionNo || '1');
             const currentLevel = Number(item.positionWeight || 0);
             const wasteType = item.rubbishName || 'Unknown';
             const CLEANING_THRESHOLD_KG = 0.5;
