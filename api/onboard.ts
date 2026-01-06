@@ -3,18 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import crypto from 'crypto';
 
-// 🟢 CONFIGURATION
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-
-// ⚠️ CRITICAL: Use the SERVICE_ROLE_KEY to bypass permissions/RLS
-// If you don't have this env var, copy it from your Supabase Dashboard > Settings > API
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY!; 
-
 const SECRET = process.env.VITE_API_SECRET!;        
 const MERCHANT_NO = process.env.VITE_MERCHANT_NO!;
 const API_BASE = "https://api.autogcm.com";
 
-// Initialize with Service Key
 const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { autoRefreshToken: false, persistSession: false }
 });
@@ -30,81 +24,76 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone is required' });
 
+  const debugLog: any[] = []; // 🔍 We will collect proof here
+
   try {
-    console.log(`🚀 Starting Onboarding for: ${phone}`);
+    // 1. Get User
+    const { data: user } = await supabase.from('users').select('id, phone').eq('phone', phone).single();
+    if (!user) return res.status(404).json({ error: 'User not found in DB' });
+    
+    debugLog.push({ step: "User Found", userId: user.id });
 
-    // --- A. GET USER ---
-    const { data: user, error: userError } = await supabase.from('users').select('id').eq('phone', phone).single();
-    if (userError || !user) {
-        return res.status(404).json({ error: 'User not found in DB' });
-    }
-
-    // --- B. CHECK MIGRATION ---
+    // 2. Check Migration
     const { data: existing } = await supabase.from('wallet_transactions')
         .select('id').eq('user_id', user.id).eq('transaction_type', 'MIGRATION_ADJUSTMENT').maybeSingle();
-    
-    if (existing) return res.status(200).json({ msg: "Already onboarded" });
+    if (existing) return res.status(200).json({ msg: "Already onboarded", debugLog });
 
-    // --- C. FETCH VENDOR DATA ---
+    // 3. Vendor Data
     const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', { phone, nikeName: 'User', avatarUrl: '' });
-    if (!profile || !profile.data) return res.status(502).json({ error: "Vendor API Connection Failed" });
-    
+    if (!profile || !profile.data) return res.status(502).json({ error: "Vendor API Failed" });
     const livePoints = Number(profile?.data?.integral || 0);
 
     const historyRes = await callAutoGCM('/api/open/v1/put', 'GET', { phone, pageNum: 1, pageSize: 100 });
     const historyList = historyRes?.data?.list || [];
 
-    // --- D. IMPORT HISTORY ---
+    // 4. Get Merchant
+    const { data: merchant } = await supabase.from('merchants').select('id').limit(1).single();
+    if (!merchant) return res.status(500).json({ error: "Merchant missing" });
+    
+    debugLog.push({ step: "Merchant Found", merchantId: merchant.id });
+
     let totalImportedValue = 0;
     let totalImportedWeight = 0;
-    
-    // Get Merchant ID
-    const { data: merchant } = await supabase.from('merchants').select('id').limit(1).single();
-    if (!merchant) return res.status(500).json({ error: "Merchant configuration missing" });
-    const merchantId = merchant.id;
 
-    const errors: any[] = [];
-
-    console.log(`Processing ${historyList.length} history items...`);
-
+    // 5. PROCESS LOOP
     for (const record of historyList) {
         const recordValue = Number(record.integral || 0);
         const recordWeight = Number(record.totalWeight || record.weight || 0);
         const putId = String(record.putId); 
 
+        // Check Existing
         const { data: existingRecord } = await supabase.from('submission_reviews')
             .select('id, status').eq('vendor_record_id', putId).maybeSingle();
 
         if (existingRecord) {
-            if (existingRecord.status === 'PENDING') {
-                console.log(`🔹 Updating PENDING record ${putId} to VERIFIED`);
-                
-                // 🔥 CAPTURE UPDATE ERROR
-                const { error: updateError } = await supabase.from('submission_reviews').update({
+             if (existingRecord.status === 'PENDING') {
+                // UPDATE
+                const { data: updatedData, error: updateError } = await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
                     source: 'MIGRATION',
                     calculated_value: recordValue,
                     confirmed_weight: recordWeight,
                     reviewed_at: new Date().toISOString(),
                     user_id: user.id 
-                }).eq('id', existingRecord.id);
+                }).eq('id', existingRecord.id).select(); // 👈 .select() returns the row!
 
                 if (updateError) {
-                    errors.push({ type: 'UPDATE_FAIL', id: putId, msg: updateError.message });
+                    debugLog.push({ error: "Update Failed", id: putId, msg: updateError.message });
                 } else {
+                    debugLog.push({ success: "Updated", id: existingRecord.id, returned: updatedData });
                     totalImportedValue += recordValue;
                     totalImportedWeight += recordWeight;
                 }
-            } 
-            else if (existingRecord.status === 'VERIFIED') {
+            } else {
+                debugLog.push({ info: "Already Verified", id: existingRecord.id });
                 totalImportedValue += recordValue;
                 totalImportedWeight += recordWeight;
             }
         } else {
-            // 🔥 CAPTURE INSERT ERROR
-            const { error: insertError } = await supabase.from('submission_reviews').insert({
+            // INSERT
+            const { data: insertedData, error: insertError } = await supabase.from('submission_reviews').insert({
                 user_id: user.id, 
-                merchant_id: merchantId, 
+                merchant_id: merchant.id, 
                 vendor_record_id: putId,
                 status: 'VERIFIED',
                 calculated_value: recordValue, 
@@ -114,12 +103,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 api_weight: recordWeight,
                 confirmed_weight: recordWeight,
                 machine_given_points: recordValue
-            });
-            
+            }).select(); // 👈 .select() is CRITICAL here to prove it wrote
+
             if (insertError) {
-                console.error(`❌ Insert Failed for ${putId}:`, insertError.message);
-                errors.push({ type: 'INSERT_FAIL', id: putId, msg: insertError.message });
+                debugLog.push({ error: "Insert Failed", id: putId, msg: insertError.message });
             } else {
+                debugLog.push({ success: "Inserted", returned: insertedData }); // 👈 This will show the new ID
                 totalImportedValue += recordValue;
                 totalImportedWeight += recordWeight;
             }
@@ -129,25 +118,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // --- E. ADJUSTMENT & SAVE ---
     const adjustmentNeeded = livePoints - totalImportedValue;
 
-    // 1. Transaction Record
     await supabase.from('wallet_transactions').insert({
         user_id: user.id, 
-        merchant_id: merchantId, 
+        merchant_id: merchant.id, 
         amount: adjustmentNeeded,
         balance_after: livePoints, 
         transaction_type: 'MIGRATION_ADJUSTMENT', 
         description: adjustmentNeeded < 0 ? 'Legacy System Adjustment (Spent)' : 'Legacy System Balance'
     });
 
-    // 2. Withdrawal Record (if negative)
     if (adjustmentNeeded < 0) {
-        const withdrawalAmount = Math.abs(adjustmentNeeded);
-        console.log(`📝 Recording legacy withdrawal of ${withdrawalAmount} pts`);
-
         await supabase.from('withdrawals').insert({
              user_id: user.id,
-             merchant_id: merchantId,
-             amount: withdrawalAmount,
+             merchant_id: merchant.id,
+             amount: Math.abs(adjustmentNeeded),
              status: 'EXTERNAL_SYNC', 
              created_at: new Date().toISOString(),
              bank_name: 'Legacy System',
@@ -156,41 +140,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 
-    // 3. Update Merchant Wallet
     await supabase.from('merchant_wallets').upsert({
-        user_id: user.id, merchant_id: merchantId,
+        user_id: user.id, merchant_id: merchant.id,
         current_balance: livePoints, 
         total_earnings: totalImportedValue 
     }, { onConflict: 'user_id, merchant_id' });
 
-    // --- F. 🚨 CRITICAL: UPDATE USER PROFILE 🚨 ---
-    // This updates the user's "Lifetime Integral" and "Total Weight" columns
-    const { error: userUpdateError } = await supabase.from('users').update({
+    await supabase.from('users').update({
         lifetime_integral: livePoints,
         total_weight: totalImportedWeight,
         last_synced_at: new Date().toISOString(),
         nickname: profile?.data?.nikeName || profile?.data?.name || 'User',
-        avatar_url: profile?.data?.imgUrl || null,
         vendor_user_no: profile?.data?.userNo
     }).eq('id', user.id);
-
-    if (userUpdateError) errors.push({ type: 'USER_UPDATE_FAIL', msg: userUpdateError.message });
 
     return res.status(200).json({ 
         success: true, 
         balance: livePoints, 
         migrated: true,
-        history_items: historyList.length,
-        errors: errors 
+        debug_log: debugLog // 👈 The most important part
     });
 
   } catch (error: any) {
-    console.error("Onboarding Error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message, debug_log: debugLog });
   }
 }
 
-// Helper (Unchanged)
+// Helper
 async function callAutoGCM(endpoint: string, method: string, data: any) {
     const timestamp = Date.now().toString();
     const sign = crypto.createHash('md5').update(MERCHANT_NO + SECRET + timestamp).digest('hex');
@@ -201,7 +177,5 @@ async function callAutoGCM(endpoint: string, method: string, data: any) {
             [method === 'GET' ? 'params' : 'data']: data
         });
         return res.data;
-    } catch (e: any) { 
-        return null; 
-    }
+    } catch (e: any) { return null; }
 }
