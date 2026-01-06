@@ -1,15 +1,29 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import axios from 'axios';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+//  Define your Debug URL
+const DEBUG_WEBHOOK_URL = "https://webhook.site/318f92d0-0e9f-4d44-a388-70c6d6a0c591";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 1. CORS & Method Check
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   const data = req.body;
+
+  // ------------------------------------------------------------------
+  // FAN-OUT: Forward to Webhook.site (Debugging)
+  // ------------------------------------------------------------------
+  // We place this at the VERY TOP so it runs before any DB logic crashes
+  if (DEBUG_WEBHOOK_URL) {
+      axios.post(DEBUG_WEBHOOK_URL, data).catch(err => {
+          console.error("⚠️ Failed to forward to debug webhook:", err.message);
+      });
+  }
 
   try {
     // ------------------------------------------------------------------
