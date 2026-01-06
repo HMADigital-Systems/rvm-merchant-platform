@@ -40,6 +40,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // --- C. FETCH VENDOR DATA ---
     // 1. Live Points
     const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', { phone, nikeName: 'User', avatarUrl: '' });
+    if (!profile || !profile.data) {
+        console.error("❌ Failed to fetch Vendor Data. Aborting migration to protect user balance.");
+        return res.status(502).json({ error: "Vendor API Connection Failed" });
+    }
     const livePoints = Number(profile?.data?.integral || 0);
 
     // 2. History
