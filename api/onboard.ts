@@ -5,7 +5,6 @@ import crypto from 'crypto';
 
 // 🟢 CONFIGURATION
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-// ⚠️ Use Service Role Key to bypass RLS and ensure writes
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY!; 
 const SECRET = process.env.VITE_API_SECRET!;        
 const MERCHANT_NO = process.env.VITE_MERCHANT_NO!;
@@ -16,7 +15,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*'); 
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -44,13 +42,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!profile || !profile.data) return res.status(502).json({ error: "Vendor API Failed" });
     const livePoints = Number(profile?.data?.integral || 0);
 
-    // 4. 🔥 FETCH HISTORY (With Loop & Date Range)
+    // 4. Fetch History
     let historyList: any[] = [];
     let pageNum = 1;
     const pageSize = 100;
     let hasNext = true;
-
-    // Date Range: 2020-01-01 to Today
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     
@@ -58,23 +54,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     while (hasNext) {
         const res = await callAutoGCM('/api/open/v1/put', 'GET', { 
-            phone, 
-            pageNum, 
-            pageSize,
-            startTime: '2020-01-01', 
-            endTime: todayStr
+            phone, pageNum, pageSize, startTime: '2020-01-01', endTime: todayStr
         });
-
         const list = res?.data?.list || [];
         if (list.length > 0) {
             historyList = [...historyList, ...list];
-            // Check if we reached the last page
             const total = res?.data?.total || 0;
-            if (historyList.length >= total || list.length < pageSize) {
-                hasNext = false;
-            } else {
-                pageNum++;
-            }
+            if (historyList.length >= total || list.length < pageSize) hasNext = false;
+            else pageNum++;
         } else {
             hasNext = false;
         }
@@ -82,9 +69,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     debugLog.push({ step: "Fetch Complete", totalItems: historyList.length });
 
-    // 5. Get Merchant
-    const { data: merchant } = await supabase.from('merchants').select('id').limit(1).single();
-    if (!merchant) return res.status(500).json({ error: "Merchant missing" });
+    // --- 🔥 FIX STARTS HERE: LOAD MACHINE MAP ---
+    
+    // A. Get Default Merchant (Fallback if machine not found)
+    const { data: defaultMerchant } = await supabase.from('merchants').select('id').limit(1).single();
+    if (!defaultMerchant) return res.status(500).json({ error: "No merchants found in DB" });
+    const fallbackMerchantId = defaultMerchant.id;
+
+    // B. Build Machine -> Merchant Map
+    const { data: machines } = await supabase.from('machines').select('device_no, merchant_id');
+    const machineMap: Record<string, string> = {};
+    if (machines) {
+        machines.forEach(m => {
+            if (m.device_no) machineMap[m.device_no] = m.merchant_id;
+        });
+    }
+    
+    debugLog.push({ step: "Machine Map Loaded", mapSize: Object.keys(machineMap).length });
+
+    // --- FIX END ---
 
     let totalImportedValue = 0;
     let totalImportedWeight = 0;
@@ -94,33 +97,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const recordValue = Number(record.integral || 0);
         const recordWeight = Number(record.totalWeight || record.weight || 0);
         
-        // --- A. EXTRACT FIELDS ---
+        // Extract Fields
         const deviceNo = record.deviceNo || null;
         const recordPhone = record.phonenumber || null; 
         
         let photoUrl = null;
-        // Parse comma-separated images if present
         if (record.imgUrl) photoUrl = record.imgUrl.split(',')[0];
         
         let wasteType = 'Unknown';
-
-        // Extract detailed info if available
         if (record.rubbishLogDetailsVOList && record.rubbishLogDetailsVOList.length > 0) {
             const detail = record.rubbishLogDetailsVOList[0];
             if (detail.rubbishName) wasteType = detail.rubbishName;
-            // Prefer detail image if root image is empty
             if (!photoUrl && detail.imgUrl) photoUrl = detail.imgUrl;
         }
 
-        // --- B. CALCULATE RATE (Points / Weight) ---
-        // We calculate this ourselves to ensure accuracy
         let ratePerKg = 0;
-        if (recordWeight > 0) {
-            // e.g. 1.05 pts / 3.51 kg = 0.299... -> 0.30
-            ratePerKg = Number((recordValue / recordWeight).toFixed(3)); 
+        if (recordWeight > 0) ratePerKg = Number((recordValue / recordWeight).toFixed(3)); 
+
+        // --- 🔥 FIX: RESOLVE CORRECT MERCHANT ---
+        // If we know the device, use its owner. Otherwise use fallback.
+        let correctMerchantId = fallbackMerchantId;
+        if (deviceNo && machineMap[deviceNo]) {
+            correctMerchantId = machineMap[deviceNo];
         }
 
-        // --- C. ID LOGIC (Fixing the undefined bug) ---
+        // ID Logic
         let rawId = record.id || record.putId;
         let putId = rawId ? String(rawId) : "";
         
@@ -130,28 +131,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             debugLog.push({ warning: "Generated fallback ID", newId: putId });
         }
 
-        // --- D. DB OPERATIONS ---
+        // DB Operations
         const { data: existingRecord } = await supabase.from('submission_reviews')
             .select('id, status')
             .eq('vendor_record_id', putId)
-            .eq('user_id', user.id) // Strict check
+            .eq('user_id', user.id)
             .maybeSingle();
 
         if (existingRecord) {
              if (existingRecord.status === 'PENDING') {
-                const { data: updatedData } = await supabase.from('submission_reviews').update({
+                await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
                     source: 'MIGRATION',
                     calculated_value: recordValue,
                     confirmed_weight: recordWeight,
                     reviewed_at: new Date().toISOString(),
-                    // Update missing fields
                     device_no: deviceNo,
                     waste_type: wasteType,
                     photo_url: photoUrl,
                     phone: recordPhone,
-                    rate_per_kg: ratePerKg
-                }).eq('id', existingRecord.id).select();
+                    rate_per_kg: ratePerKg,
+                    merchant_id: correctMerchantId // ✅ Use Correct Merchant
+                }).eq('id', existingRecord.id);
                 
                 totalImportedValue += recordValue;
                 totalImportedWeight += recordWeight;
@@ -160,9 +161,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 totalImportedWeight += recordWeight;
             }
         } else {
-            const { data: insertedData, error: insertError } = await supabase.from('submission_reviews').insert({
+            const { error: insertError } = await supabase.from('submission_reviews').insert({
                 user_id: user.id, 
-                merchant_id: merchant.id, 
+                merchant_id: correctMerchantId, // ✅ Use Correct Merchant
                 vendor_record_id: putId,
                 status: 'VERIFIED',
                 calculated_value: recordValue, 
@@ -172,12 +173,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 api_weight: recordWeight,
                 confirmed_weight: recordWeight,
                 machine_given_points: recordValue,
-                // Insert missing fields
                 device_no: deviceNo,
                 photo_url: photoUrl,
                 phone: recordPhone,
                 rate_per_kg: ratePerKg
-            }).select();
+            });
 
             if (insertError) {
                 debugLog.push({ error: "Insert Failed", id: putId, msg: insertError.message });
@@ -189,11 +189,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // --- E. ADJUSTMENT & SAVE ---
+    // Note: The adjustment transaction is assigned to the FALLBACK merchant 
+    // because it's a global balance correction, not specific to one machine.
     const adjustmentNeeded = livePoints - totalImportedValue;
 
     await supabase.from('wallet_transactions').insert({
         user_id: user.id, 
-        merchant_id: merchant.id, 
+        merchant_id: fallbackMerchantId, 
         amount: adjustmentNeeded,
         balance_after: livePoints, 
         transaction_type: 'MIGRATION_ADJUSTMENT', 
@@ -203,7 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (adjustmentNeeded < 0) {
         await supabase.from('withdrawals').insert({
              user_id: user.id,
-             merchant_id: merchant.id,
+             merchant_id: fallbackMerchantId,
              amount: Math.abs(adjustmentNeeded),
              status: 'EXTERNAL_SYNC', 
              created_at: new Date().toISOString(),
@@ -213,8 +215,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 
+    // Update Wallet for the fallback merchant (Global earnings bucket)
     await supabase.from('merchant_wallets').upsert({
-        user_id: user.id, merchant_id: merchant.id,
+        user_id: user.id, merchant_id: fallbackMerchantId,
         current_balance: livePoints, 
         total_earnings: totalImportedValue 
     }, { onConflict: 'user_id, merchant_id' });
