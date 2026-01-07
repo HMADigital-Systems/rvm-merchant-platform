@@ -71,10 +71,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // --- 🔥 FIX STARTS HERE: LOAD MACHINE MAP ---
     
-    // A. Get Default Merchant (Fallback if machine not found)
-    const { data: defaultMerchant } = await supabase.from('merchants').select('id').limit(1).single();
-    if (!defaultMerchant) return res.status(500).json({ error: "No merchants found in DB" });
-    const fallbackMerchantId = defaultMerchant.id;
+    // A. Get Default Merchant (Smart Fallback)
+    // 1. First, try to find "Meranti" specifically (or your main operation merchant)
+    let fallbackMerchantId = null;
+    
+    const { data: preferredMerchant } = await supabase
+        .from('merchants')
+        .select('id')
+        .ilike('name', '%Meranti%') // Change 'Meranti' to your actual main merchant name
+        .maybeSingle();
+
+    if (preferredMerchant) {
+        fallbackMerchantId = preferredMerchant.id;
+    } else {
+        // 2. If Meranti doesn't exist, grab the first one available
+        const { data: anyMerchant } = await supabase.from('merchants').select('id').limit(1).single();
+        if (!anyMerchant) return res.status(500).json({ error: "No merchants found in DB" });
+        fallbackMerchantId = anyMerchant.id;
+    }
 
     // B. Build Machine -> Merchant Map
     const { data: machines } = await supabase.from('machines').select('device_no, merchant_id');

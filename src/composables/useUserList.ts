@@ -26,7 +26,8 @@ export function useUserList() {
                 merchant_wallets!inner (
                     current_balance,
                     total_earnings,
-                    merchant_id
+                    merchant_id,
+                    total_weight
                 )
             `)
             .order('created_at', { ascending: false });

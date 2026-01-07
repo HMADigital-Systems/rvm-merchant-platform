@@ -190,7 +190,7 @@ export function useSubmissionReviews() {
             // 3. CREDIT MERCHANT WALLET (The Money Part)
             const { data: wallet } = await supabase
                 .from('merchant_wallets')
-                .select('id, current_balance, total_earnings')
+                .select('id, current_balance, total_earnings, total_weight') // CHANGED: Select total_weight
                 .eq('user_id', review.user_id)
                 .eq('merchant_id', review.merchant_id)
                 .maybeSingle();
@@ -202,7 +202,8 @@ export function useSubmissionReviews() {
                 // Update existing wallet
                 await supabase.from('merchant_wallets').update({
                     current_balance: newBalance,
-                    total_earnings: Number(wallet.total_earnings) + finalPoints
+                    total_earnings: Number(wallet.total_earnings) + finalPoints,
+                    total_weight: Number(wallet.total_weight || 0) + finalWeight // CHANGED: Add weight here
                 }).eq('id', wallet.id);
             } else {
                 // Create new wallet if first time
@@ -210,10 +211,10 @@ export function useSubmissionReviews() {
                     user_id: review.user_id,
                     merchant_id: review.merchant_id,
                     current_balance: finalPoints,
-                    total_earnings: finalPoints
+                    total_earnings: finalPoints,
+                    total_weight: finalWeight // 👈 CHANGED: Insert initial weight
                 });
             }
-
             // 4. LOG TRANSACTION (The Audit Trail)
             await supabase.from('wallet_transactions').insert({
                 user_id: review.user_id,
