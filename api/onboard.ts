@@ -89,15 +89,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let totalImportedValue = 0;
     let totalImportedWeight = 0;
 
-    // 6. PROCESS LOOP (With your undefined ID fix)
+    // 6. PROCESS LOOP (Fixed ID mapping)
     for (const record of historyList) {
         const recordValue = Number(record.integral || 0);
         const recordWeight = Number(record.totalWeight || record.weight || 0);
         
-        let putId = record.putId ? String(record.putId) : "";
+        // 🚨 FIX: The API returns 'id', not 'putId'. We check both to be safe.
+        // We also handle the case where ID might be a number, so we wrap in String()
+        let rawId = record.id || record.putId;
+        let putId = rawId ? String(rawId) : "";
+        
+        // Fallback only if absolutely no ID is found
         if (!putId || putId === "undefined" || putId === "null") {
             const uniqueSuffix = new Date(record.createTime || Date.now()).getTime(); 
-            // Add randomness to prevent collision if multiple items have same timestamp
             putId = `MANUAL-${uniqueSuffix}-${Math.floor(recordWeight * 100)}-${Math.random().toString(36).substring(7)}`;
             debugLog.push({ warning: "Generated fallback ID", newId: putId });
         }
@@ -105,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { data: existingRecord } = await supabase.from('submission_reviews')
             .select('id, status')
             .eq('vendor_record_id', putId)
-            .eq('user_id', user.id) // Strict check
+            .eq('user_id', user.id)
             .maybeSingle();
 
         if (existingRecord) {
