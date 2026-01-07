@@ -165,34 +165,34 @@ export function useSubmissionReviews() {
         try {
             const finalPoints = parseFloat((finalWeight * currentRate).toFixed(2));
 
-            // 1. Get Review Details (We need user_id and merchant_id)
-            const { data: reviewData, error: fetchError } = await supabase
+            // 1. GET DETAILS (We need user_id and merchant_id to pay the right person)
+            const { data: review, error: fetchError } = await supabase
                 .from('submission_reviews')
                 .select('user_id, merchant_id')
                 .eq('id', reviewId)
                 .single();
-            
-            if (fetchError || !reviewData) throw new Error("Review not found");
 
-            // 2. Update Review Status
+            if (fetchError || !review) throw new Error("Review not found");
+
+            // 2. UPDATE REVIEW STATUS
             const { error: updateError } = await supabase
                 .from('submission_reviews')
                 .update({
                     status: 'VERIFIED',
                     confirmed_weight: finalWeight,
-                    calculated_value: finalPoints, 
+                    calculated_value: finalPoints, // ✅ FIXED: DB Column is 'calculated_value'
                     reviewed_at: new Date().toISOString()
                 })
                 .eq('id', reviewId);
 
             if (updateError) throw updateError;
 
-            // 3. CREDIT WALLET (This updates the User List Balance)
+            // 3. CREDIT MERCHANT WALLET (The Money Part)
             const { data: wallet } = await supabase
                 .from('merchant_wallets')
                 .select('id, current_balance, total_earnings')
-                .eq('user_id', reviewData.user_id)
-                .eq('merchant_id', reviewData.merchant_id)
+                .eq('user_id', review.user_id)
+                .eq('merchant_id', review.merchant_id)
                 .maybeSingle();
 
             let newBalance = finalPoints;
@@ -207,37 +207,36 @@ export function useSubmissionReviews() {
             } else {
                 // Create new wallet if first time
                 await supabase.from('merchant_wallets').insert({
-                    user_id: reviewData.user_id,
-                    merchant_id: reviewData.merchant_id,
+                    user_id: review.user_id,
+                    merchant_id: review.merchant_id,
                     current_balance: finalPoints,
                     total_earnings: finalPoints
                 });
             }
 
-            // 4. LOG TRANSACTION (Audit Trail)
+            // 4. LOG TRANSACTION (The Audit Trail)
             await supabase.from('wallet_transactions').insert({
-                user_id: reviewData.user_id,
-                merchant_id: reviewData.merchant_id,
+                user_id: review.user_id,
+                merchant_id: review.merchant_id,
                 amount: finalPoints,
                 balance_after: newBalance,
                 transaction_type: 'RECYCLE_EARNING',
-                description: `Recycled ${finalWeight}kg`
+                description: `Recycled ${finalWeight}kg (Verified)`
             });
 
-            // 5. UPDATE TOTAL WEIGHT (This updates the User List Recycled Kg)
-            const { data: userData } = await supabase
+            // 5. UPDATE USER STATS (The Profile Totals)
+            const { data: user } = await supabase
                 .from('users')
-                .select('total_weight, lifetime_integral')
-                .eq('id', reviewData.user_id)
+                .select('lifetime_integral, total_weight')
+                .eq('id', review.user_id)
                 .single();
-            
-            const currentWeight = Number(userData?.total_weight || 0);
-            const currentIntegral = Number(userData?.lifetime_integral || 0);
-            
-            await supabase.from('users').update({
-                total_weight: currentWeight + finalWeight,
-                lifetime_integral: currentIntegral + finalPoints
-            }).eq('id', reviewData.user_id);
+
+            if (user) {
+                await supabase.from('users').update({
+                    lifetime_integral: (Number(user.lifetime_integral) || 0) + finalPoints,
+                    total_weight: (Number(user.total_weight) || 0) + finalWeight
+                }).eq('id', review.user_id);
+            }
 
             await fetchReviews();
             return true;

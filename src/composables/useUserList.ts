@@ -42,19 +42,28 @@ export function useUserList() {
         if (error) throw error;
 
         // 6. Map Data
+        // 6. Map Data
         users.value = data.map(u => {
-            let wallet;
+            let currentBalance = 0;
+            let totalEarnings = 0;
+
             if (auth.merchantId) {
-                wallet = u.merchant_wallets?.find((w: any) => w.merchant_id === auth.merchantId);
+                // Specific Merchant: Only show money for THIS merchant
+                const wallet = u.merchant_wallets?.find((w: any) => w.merchant_id === auth.merchantId);
+                currentBalance = wallet ? Number(wallet.current_balance) : 0;
+                totalEarnings = wallet ? Number(wallet.total_earnings) : 0;
             } else {
-                // Platform Owner: Just grab the first wallet found for now
-                wallet = u.merchant_wallets?.[0]; 
+                // 🔥 PLATFORM OWNER FIX: Sum up ALL wallets
+                if (u.merchant_wallets && Array.isArray(u.merchant_wallets)) {
+                    currentBalance = u.merchant_wallets.reduce((sum: number, w: any) => sum + Number(w.current_balance || 0), 0);
+                    totalEarnings = u.merchant_wallets.reduce((sum: number, w: any) => sum + Number(w.total_earnings || 0), 0);
+                }
             }
 
             return {
                 ...u,
-                balance: wallet ? Number(wallet.current_balance) : 0,
-                earnings: wallet ? Number(wallet.total_earnings) : 0
+                balance: currentBalance,
+                earnings: totalEarnings
             };
         });
 
@@ -66,20 +75,46 @@ export function useUserList() {
   };
 
   // 2. Adjust Balance (Updated with Category)
+  // 2. Adjust Balance (Fixed TypeScript Error)
   const adjustBalance = async (userId: string, amount: number, note: string, category: 'ADJUSTMENT' | 'WITHDRAWAL') => {
       if (!userId || amount === 0) return;
       isSubmitting.value = true;
       try {
+          // --- 🔥 DETERMINE TARGET MERCHANT ID ---
+          let targetMerchantId = auth.merchantId;
+
+          // If we are Super Admin (no merchantId), find the user's active wallet
+          if (!targetMerchantId) {
+              const { data: userWallets } = await supabase
+                  .from('merchant_wallets')
+                  .select('merchant_id')
+                  .eq('user_id', userId)
+                  .order('total_earnings', { ascending: false }) 
+                  .limit(1);
+              
+              // ✅ TS FIX: Use optional chaining (?.) to safely access the first item
+              if (userWallets && userWallets.length > 0) {
+                  targetMerchantId = userWallets[0]?.merchant_id; 
+              } else {
+                  // Fallback: Pick the first merchant in DB
+                  const { data: fallback } = await supabase.from('merchants').select('id').limit(1).single();
+                  targetMerchantId = fallback?.id;
+              }
+          }
+
+          if (!targetMerchantId) throw new Error("Could not determine which merchant wallet to adjust.");
+          
+          // --- END FIX ---
+
           // A. Get current wallet
           const { data: wallet } = await supabase
               .from('merchant_wallets')
               .select('*')
               .eq('user_id', userId)
-              .eq('merchant_id', auth.merchantId)
+              .eq('merchant_id', targetMerchantId)
               .maybeSingle();
 
           // Calculate new balance
-          // Note: 'amount' comes in as +10 or -10 directly from the input
           const currentBal = wallet ? Number(wallet.current_balance) : 0;
           const currentEarn = wallet ? Number(wallet.total_earnings) : 0;
           const newBalance = currentBal + amount;
@@ -88,35 +123,32 @@ export function useUserList() {
           if (wallet) {
               const { error: uError } = await supabase.from('merchant_wallets').update({
                   current_balance: newBalance,
-                  // If adding money, increase total earnings. If deducting, leave earnings alone.
                   total_earnings: amount > 0 ? currentEarn + amount : currentEarn
               }).eq('id', wallet.id);
               if (uError) throw uError;
           } else {
               const { error: iError } = await supabase.from('merchant_wallets').insert({
                   user_id: userId,
-                  merchant_id: auth.merchantId,
+                  merchant_id: targetMerchantId,
                   current_balance: newBalance,
                   total_earnings: amount > 0 ? amount : 0
               });
               if (iError) throw iError;
           }
 
-          // C. 🔥 BRANCHING LOGIC
+          // C. BRANCHING LOGIC
           if (category === 'WITHDRAWAL') {
-              // User is deducting money (-10) to represent a past withdrawal
-              // We store positive value "10" in withdrawals table
               await supabase.from('withdrawals').insert({
                   user_id: userId,
-                  merchant_id: auth.merchantId,
-                  amount: Math.abs(amount), // Store as positive "10.00"
-                  status: 'EXTERNAL_SYNC'   // Special flag for migration/manual
+                  merchant_id: targetMerchantId,
+                  amount: Math.abs(amount),
+                  status: 'EXTERNAL_SYNC'
               });
           }
 
-          // D. Always Log to Ledger
+          // D. Log to Ledger
           await supabase.from('wallet_transactions').insert({
-              merchant_id: auth.merchantId,
+              merchant_id: targetMerchantId,
               user_id: userId,
               amount: amount,
               balance_after: newBalance,
@@ -134,7 +166,7 @@ export function useUserList() {
       }
   };
 
-  // 3. Create Test User
+  
   // 3. Create Test User (Updated)
   const createTestUser = async (nickname: string, phone: string) => {
       isSubmitting.value = true;
