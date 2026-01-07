@@ -101,6 +101,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     debugLog.push({ step: "Machine Map Loaded", mapSize: Object.keys(machineMap).length });
 
+    // CHANGE 1: Define the Tracker here
+    const merchantStats = new Map<string, { earnings: number, weight: number }>();
+
+    let totalImportedValue = 0;
+    let totalImportedWeight = 0;
+
     // --- FIX END ---
 
     let totalImportedValue = 0;
@@ -134,6 +140,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (deviceNo && machineMap[deviceNo]) {
             correctMerchantId = machineMap[deviceNo];
         }
+
+        // 🔥 CHANGE 2: Update Stats for this specific merchant
+        const stats = merchantStats.get(correctMerchantId) || { earnings: 0, weight: 0 };
+        stats.earnings += recordValue;
+        stats.weight += recordWeight;
+        merchantStats.set(correctMerchantId, stats);
 
         // ID Logic
         let rawId = record.id || record.putId;
@@ -229,12 +241,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 
-    // Update Wallet for the fallback merchant (Global earnings bucket)
-    await supabase.from('merchant_wallets').upsert({
-        user_id: user.id, merchant_id: fallbackMerchantId,
-        current_balance: livePoints, 
-        total_earnings: totalImportedValue 
-    }, { onConflict: 'user_id, merchant_id' });
+    // 🔥 CHANGE 3: Create Wallets for EACH Merchant found
+    for (const [merchantId, stats] of merchantStats.entries()) {
+        await supabase.from('merchant_wallets').upsert({
+            user_id: user.id,
+            merchant_id: merchantId,
+            current_balance: stats.earnings, 
+            total_earnings: stats.earnings,
+            total_weight: stats.weight
+        }, { onConflict: 'user_id, merchant_id' });
+    }
+
+    // 4. Apply Adjustment to Fallback Wallet Only
+    if (adjustmentNeeded !== 0) {
+        const { data: fallbackWallet } = await supabase.from('merchant_wallets')
+            .select('current_balance')
+            .eq('user_id', user.id)
+            .eq('merchant_id', fallbackMerchantId)
+            .single();
+
+        const currentBal = fallbackWallet ? Number(fallbackWallet.current_balance) : 0;
+        
+        await supabase.from('merchant_wallets').update({
+            current_balance: currentBal + adjustmentNeeded
+        }).eq('user_id', user.id).eq('merchant_id', fallbackMerchantId);
+    }
 
     await supabase.from('users').update({
         lifetime_integral: livePoints,
