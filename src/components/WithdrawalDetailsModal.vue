@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { X, User, CreditCard, ShieldAlert } from 'lucide-vue-next';
-import type { Withdrawal } from '../types';
+import { X, CreditCard, User, Building, ShieldAlert } from 'lucide-vue-next';
 
 defineProps<{
   isOpen: boolean;
-  withdrawal: Withdrawal | null;
+  // FIX: Allow the prop to have extra properties like sub_withdrawals
+  withdrawal: any; 
 }>();
 
 const emit = defineEmits(['close']);
@@ -40,6 +40,23 @@ const emit = defineEmits(['close']);
                 {{ withdrawal.status }}
               </span>
            </div>
+        </div>
+
+        <div v-if="withdrawal.is_bundled" class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+            <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                <Building :size="14" class="mr-2"/> Split Breakdown
+            </h4>
+            <div class="space-y-2">
+                <div v-for="sub in withdrawal.sub_withdrawals" :key="sub.id" class="flex justify-between text-sm items-center bg-white p-2 rounded border border-gray-100 shadow-sm">
+                    <div class="flex flex-col">
+                        <span class="font-medium text-gray-800">
+                            {{ sub.merchants?.name || (sub.merchant_id ? `Merchant ${sub.merchant_id.slice(0,4)}...` : 'System / Legacy') }}
+                        </span>
+                        <span class="text-[10px] text-gray-400">{{ new Date(sub.created_at).toLocaleTimeString() }}</span>
+                    </div>
+                    <span class="font-bold text-gray-900">{{ sub.amount }} pts</span>
+                </div>
+            </div>
         </div>
 
         <div>

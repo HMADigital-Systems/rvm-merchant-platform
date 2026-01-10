@@ -4,6 +4,13 @@ import { supabase } from '../services/supabase';
 import { WithdrawalStatus, type Withdrawal } from '../types';
 import { useAuthStore } from '../stores/auth';
 
+interface WithdrawalWithBundle extends Withdrawal {
+  total_amount?: number;
+  bundled_ids?: string[];
+  sub_withdrawals?: any[];
+  is_bundled?: boolean;
+}
+
 interface BalanceCheckResult {
   id: string;
   available: number;
@@ -12,7 +19,7 @@ interface BalanceCheckResult {
 }
 
 export function useWithdrawals() {
-  const withdrawals = ref<Withdrawal[]>([]);
+  const withdrawals = ref<WithdrawalWithBundle[]>([]);
   const loading = ref(false);
   
   // Balance Check State
@@ -28,11 +35,8 @@ export function useWithdrawals() {
         .from('withdrawals')
         .select(`
             *,
-            users (
-            nickname,
-            phone,
-            avatar_url
-            )
+            users ( nickname, phone, avatar_url ),
+            merchants!merchant_id ( name ) 
         `)
         .order('created_at', { ascending: false });
 
@@ -42,9 +46,46 @@ export function useWithdrawals() {
       }
 
       const { data, error } = await query;
+      console.log("🔥 Raw Data from Supabase:", data);
 
       if (error) throw error;
-      withdrawals.value = data as Withdrawal[];
+     if (!auth.merchantId && data) {
+        // SUPER ADMIN: Bundle split records
+        const groups = new Map<string, WithdrawalWithBundle>();
+
+        data.forEach((item: any) => {
+          // Group by User + Exact Time + Status
+          const timeKey = new Date(item.created_at).toISOString().split('.')[0]; 
+          const key = `${item.user_id}_${timeKey}_${item.status}`;
+
+          if (!groups.has(key)) {
+            // 👇 FIX: Explicitly cast 'item' to allow adding new properties
+            const newItem: WithdrawalWithBundle = {
+              ...item,
+              is_bundled: false,
+              total_amount: Number(item.amount),
+              bundled_ids: [item.id],
+              sub_withdrawals: [item]
+            };
+            groups.set(key, newItem);
+          } else {
+            const group = groups.get(key)!;
+            group.is_bundled = true;
+            group.total_amount = (group.total_amount || 0) + Number(item.amount);
+            group.bundled_ids?.push(item.id);
+            group.sub_withdrawals?.push(item);
+            
+            // 👇 FIX: Ensure type compatibility. 
+            // If 'amount' in your types.ts is number, cast it. If string, keeps as string.
+            // Assuming amount is string based on toFixed(2) usage:
+            group.amount = group.total_amount?.toFixed(2) as any; 
+          }
+        });
+        withdrawals.value = Array.from(groups.values());
+      } else {
+        // MERCHANTS: See raw data
+        withdrawals.value = data as WithdrawalWithBundle[];
+      }
     } catch (error) {
       console.error("Failed to load withdrawals", error);
     } finally {
@@ -57,10 +98,15 @@ export function useWithdrawals() {
     if (!confirm(`Mark this request as ${newStatus}?`)) return;
 
     try {
+      // 👇 3. REPLACE THE UPDATE LOGIC HERE:
+      // Find bundle to update ALL sub-transactions at once
+      const target = withdrawals.value.find(w => w.id === id);
+      const idsToUpdate = target?.bundled_ids || [id];
+
       const { error } = await supabase
         .from('withdrawals')
         .update({ status: newStatus })
-        .eq('id', id);
+        .in('id', idsToUpdate);
 
       if (error) throw error;
 
@@ -76,7 +122,7 @@ export function useWithdrawals() {
   };
 
   // 3. Hybrid Balance Check
-  const checkBalance = async (withdrawal: Withdrawal) => {
+  const checkBalance = async (withdrawal: WithdrawalWithBundle) => {
     const auth = useAuthStore();
     const userId = withdrawal.user_id;
 
