@@ -1,6 +1,6 @@
 <template>
   <div class="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-green-50 to-white px-6">
-    <img src="/icons/logo.png" alt="Logo" class="w-36 h-36 mb-4" />
+    <img src="/icons/logo.png" alt="Logo" class="w-56 h-56 mb-4" />
     <h2 class="text-2xl font-bold text-green-700 mb-2">Welcome Back</h2>
     <p class="text-gray-500 mb-6 text-center">Login to continue recycling smarter.</p>
 

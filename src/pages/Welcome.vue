@@ -9,7 +9,7 @@
       <img
         src="/icons/logo.png"
         alt="App Logo"
-        class="w-42 h-42 mb-6 md:w-40 md:h-40 animate-fadeIn"
+        class="w-64 h-64 mb-6 md:w-80 md:h-80 animate-fadeIn"
       />
       <h1 class="text-3xl md:text-4xl font-bold text-green-700">{{ t("title") }}</h1>
       <p class="text-gray-600 mt-3 text-base md:text-lg md:max-w-2xl lg:max-w-3xl">
