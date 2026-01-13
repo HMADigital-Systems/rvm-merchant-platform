@@ -68,6 +68,11 @@ const filteredUsers = computed(() => {
     u.nickname?.toLowerCase().includes(q) || u.phone?.includes(q)
   );
 });
+
+const handleImageError = (e: Event) => {
+    const target = e.target as HTMLImageElement;
+    target.src = 'https://placehold.co/100x100?text=No+Img';
+};
 </script>
 
 <template>
@@ -110,8 +115,13 @@ const filteredUsers = computed(() => {
                     <tr v-for="user in filteredUsers" :key="user.id" class="hover:bg-gray-50/80 transition-colors">
                         <td class="px-6 py-4">
                             <div class="h-10 w-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
-                                <img v-if="user.avatar_url" :src="user.avatar_url" class="h-full w-full object-cover" />
-                                <span v-else class="text-lg">👤</span>
+                                <div class="h-10 w-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                                <img 
+                                    :src="user.avatar_url && user.avatar_url.startsWith('http') ? user.avatar_url : 'https://placehold.co/100x100?text=User'" 
+                                    class="h-full w-full object-cover"
+                                    @error="handleImageError"
+                                />
+                            </div>
                             </div>
                         </td>
                         <td class="px-6 py-4">

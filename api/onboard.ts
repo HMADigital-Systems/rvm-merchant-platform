@@ -34,9 +34,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const debugLog: any[] = []; 
 
   try {
-    // 1. Get User
-    const { data: user } = await supabase.from('users').select('id, phone').eq('phone', phone).single();
-    if (!user) return res.status(404).json({ error: 'User not found in DB' });
+    // 1. Get User (ADD nickname to selection)
+    const { data: user } = await supabase
+        .from('users')
+        .select('id, phone, nickname, avatar_url') // ✅ Fetch existing profile
+        .eq('phone', phone)
+        .single();
+
+        if (!user) return res.status(404).json({ error: 'User not found in DB' });
     
     // 2. Check Migration
     const { data: existing } = await supabase.from('wallet_transactions')
@@ -44,7 +49,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existing) return res.status(200).json({ msg: "Already onboarded", debugLog });
 
     // 3. Vendor Data
-    const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', { phone, nikeName: 'User', avatarUrl: '' });
+    // LOGIC FIX: Use existing nickname if available, otherwise default to 'User'
+    const nameToSync = (user.nickname && user.nickname !== 'New User') ? user.nickname : 'User';
+    const avatarToSync = user.avatar_url || '';
+
+    const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', { 
+        phone, 
+        nikeName: nameToSync, // Send the CORRECT name
+        avatarUrl: avatarToSync 
+    });
+
     if (!profile || !profile.data) return res.status(502).json({ error: "Vendor API Failed" });
     const livePoints = Number(profile?.data?.integral || 0);
 
@@ -117,8 +131,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 6. PROCESS LOOP
     for (const record of historyList) {
-        const recordValue = Number(record.integral || 0);
-        const recordWeight = Number(record.totalWeight || record.weight || 0);
+        const recordValue = Number(Number(record.integral || 0).toFixed(2));
+        const recordWeight = Number(Number(record.totalWeight || record.weight || 0).toFixed(2));
         
         // Extract Fields
         const deviceNo = record.deviceNo || null;
@@ -184,15 +198,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }).eq('id', existingRecord.id);
                 
                 totalImportedValue = Number((totalImportedValue + recordValue).toFixed(2));
-                totalImportedWeight += recordWeight;
+                totalImportedWeight = Number((totalImportedWeight + recordWeight).toFixed(2));
             } else {
                 totalImportedValue = Number((totalImportedValue + recordValue).toFixed(2));
-                totalImportedWeight += recordWeight;
+                totalImportedWeight = Number((totalImportedWeight + recordWeight).toFixed(2));
             }
         } else {
             const { error: insertError } = await supabase.from('submission_reviews').insert({
                 user_id: user.id, 
-                merchant_id: correctMerchantId, // ✅ Use Correct Merchant
+                merchant_id: correctMerchantId, // Use Correct Merchant
                 vendor_record_id: putId,
                 status: 'VERIFIED',
                 calculated_value: recordValue, 
@@ -212,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 debugLog.push({ error: "Insert Failed", id: putId, msg: insertError.message });
             } else {
                 totalImportedValue = Number((totalImportedValue + recordValue).toFixed(2));
-                totalImportedWeight += recordWeight;
+                totalImportedWeight = Number((totalImportedWeight + recordWeight).toFixed(2));
             }
         }
     }
@@ -255,9 +269,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await supabase.from('merchant_wallets').upsert({
             user_id: user.id,
             merchant_id: merchantId,
-            current_balance: stats.earnings, 
-            total_earnings: stats.earnings,
-            total_weight: stats.weight
+            current_balance: Number(stats.earnings.toFixed(2)), 
+            total_earnings: Number(stats.earnings.toFixed(2)),
+            total_weight: Number(stats.weight.toFixed(2))
         }, { onConflict: 'user_id, merchant_id' });
     }
 
@@ -278,10 +292,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     await supabase.from('users').update({
         lifetime_integral: livePoints,
-        total_weight: totalImportedWeight,
+        total_weight: Number(totalImportedWeight.toFixed(2)),
         last_synced_at: new Date().toISOString(),
         nickname: profile?.data?.nikeName || profile?.data?.name || 'User',
-        vendor_user_no: profile?.data?.userNo
+        vendor_user_no: profile?.data?.userNo,
+        avatar_url: profile?.data?.imgUrl || profile?.data?.avatarUrl || user.avatar_url
     }).eq('id', user.id);
 
     const isProduction = process.env.NODE_ENV === 'production';

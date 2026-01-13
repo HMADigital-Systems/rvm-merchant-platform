@@ -16,6 +16,12 @@ const { user, recyclingHistory, withdrawalHistory, loading, isSyncing, syncData,
 watch(() => route.params.id, (newId) => {
     if(newId) location.reload(); 
 });
+
+// Helper to handle broken images without TS errors
+const handleImageError = (e: Event) => {
+    const target = e.target as HTMLImageElement;
+    target.src = 'https://placehold.co/100x100?text=No+Img';
+};
 </script>
 
 <template>
@@ -31,8 +37,13 @@ watch(() => route.params.id, (newId) => {
           
           <div class="flex items-center space-x-4">
               <div class="h-16 w-16 bg-slate-100 rounded-full flex items-center justify-center border border-slate-200 overflow-hidden">
-                  <img v-if="user.avatar_url" :src="user.avatar_url" class="h-full w-full object-cover" />
-                  <span v-else class="text-2xl">👤</span>
+                  <div class="h-10 w-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                    <img 
+                        :src="user.avatar_url && user.avatar_url.startsWith('http') ? user.avatar_url : 'https://placehold.co/100x100?text=User'" 
+                        class="h-full w-full object-cover"
+                        @error="handleImageError"
+                    />
+                </div>
               </div>
               <div>
                   <h1 class="text-2xl font-bold text-gray-900">{{ user.nickname || 'Unknown User' }}</h1>
