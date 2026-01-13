@@ -11,12 +11,12 @@
         />
       </div>
       <h2 class="text-xl font-semibold mt-3">{{ user.name }}</h2>
-      <p class="text-sm text-green-100">{{ user.phone || "Phone not set" }}</p>
+      <p class="text-sm text-green-100">{{ user.phone || t('profile.phone_not_set') }}</p>
     </div>
 
     <div class="w-11/12 max-w-md bg-white rounded-2xl shadow p-6 mt-6 text-gray-700">
       <div class="flex justify-between items-center border-b pb-3 mb-3">
-        <span class="font-medium">Total Recycled</span>
+        <span class="font-medium">{{ t('profile.total_recycled') }}</span>
         
         <span v-if="user.totalWeight !== null" class="font-bold text-green-600">{{ user.totalWeight }} kg</span>
         <div v-else class="h-6 w-20 bg-gray-200 animate-pulse rounded"></div>
@@ -24,7 +24,7 @@
       </div>
 
       <div class="flex justify-between items-center">
-        <span class="font-medium">Reward Points</span>
+        <span class="font-medium">{{ t('profile.lifetime_points') }}</span>
         <span>{{ user.points }}</span>
       </div>
     </div>
@@ -33,37 +33,37 @@
       @click="openEditModal"
       class="mt-8 text-green-600 font-semibold hover:underline"
     >
-      Edit Profile
+      {{ t('profile.edit_profile') }}
     </button>
 
     <button
       @click="confirmLogout"
       class="mt-4 w-11/12 max-w-md bg-red-500 text-white py-2 rounded-full font-semibold hover:bg-red-600 transition shadow-md"
     >
-      Logout
+      {{ t('profile.logout') }}
     </button>
 
     <Navbar />
 
     <BaseModal :isOpen="showLogoutModal" @close="showLogoutModal = false">
-      <h3 class="text-lg font-bold text-gray-800 mb-2 text-center">Log Out?</h3>
-      <p class="text-gray-500 mb-6 text-center">Are you sure you want to sign out of your account?</p>
+      <h3 class="text-lg font-bold text-gray-800 mb-2 text-center">{{ t('profile.logout_title') }}</h3>
+      <p class="text-gray-500 mb-6 text-center">{{ t('profile.logout_msg') }}</p>
       <div class="flex gap-3 justify-center">
-        <button @click="showLogoutModal = false" class="px-5 py-2 rounded-full bg-gray-200 text-gray-700 font-medium hover:bg-gray-300">Cancel</button>
-        <button @click="performLogout" class="px-5 py-2 rounded-full bg-red-500 text-white font-medium hover:bg-red-600">Yes, Logout</button>
+        <button @click="showLogoutModal = false" class="px-5 py-2 rounded-full bg-gray-200 text-gray-700 font-medium hover:bg-gray-300">{{ t('profile.cancel') }}</button>
+        <button @click="performLogout" class="px-5 py-2 rounded-full bg-red-500 text-white font-medium hover:bg-red-600">{{ t('profile.confirm_logout') }}</button>
       </div>
     </BaseModal>
 
     <BaseModal :isOpen="showEditModal" @close="showEditModal = false">
-      <h3 class="text-lg font-bold text-gray-800 mb-4 text-center">Edit Profile</h3>
+      <h3 class="text-lg font-bold text-gray-800 mb-4 text-center">{{ t('profile.edit_title') }}</h3>
       
       <div class="mb-4">
-        <label class="block text-sm text-gray-600 mb-1">Nickname</label>
+        <label class="block text-sm text-gray-600 mb-1">{{ t('profile.nickname') }}</label>
         <input v-model="editForm.name" class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none transition" placeholder="Enter new nickname" />
       </div>
 
       <div class="mb-6">
-        <label class="block text-sm text-gray-600 mb-2">Select Avatar</label>
+        <label class="block text-sm text-gray-600 mb-2">{{ t('profile.select_avatar') }}</label>
         <div class="grid grid-cols-4 gap-2">
           <div 
             v-for="(av, index) in presetAvatars" 
@@ -80,7 +80,7 @@
 
       <div class="flex gap-3">
         <button @click="showEditModal = false" class="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-medium hover:bg-gray-300 transition">
-          Cancel
+          {{ t('profile.cancel') }}
         </button>
         
         <button 
@@ -89,7 +89,7 @@
           :disabled="isSaving"
         >
           <Loader2 v-if="isSaving" class="w-4 h-4 animate-spin" />
-          <span>{{ isSaving ? "Saving..." : "Save Changes" }}</span>
+          <span>{{ isSaving ? t('profile.saving') : t('profile.save') }}</span>
         </button>
       </div>
     </BaseModal>
@@ -105,7 +105,7 @@
         <p class="text-gray-500 mb-6">{{ feedbackModal.message }}</p>
         <button @click="closeFeedback" class="w-full py-2 rounded-lg font-medium transition text-white"
           :class="feedbackModal.isError ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'">
-          Okay
+          {{ t('withdraw.modal_ok') }}
         </button>
       </div>
     </BaseModal>
@@ -115,9 +115,11 @@
 
 <script setup>
 import Navbar from "../components/NavBar.vue";
-import BaseModal from "../components/BaseModal.vue"; // ✅ Uses your new component
+import BaseModal from "../components/BaseModal.vue"; // Uses your new component
 import { useProfileLogic } from "../composables/useProfileLogic.js";
-import { Loader2 } from "lucide-vue-next"; // ✅ Import Spinner Icon
+import { Loader2 } from "lucide-vue-next"; // Import Spinner Icon
+import { useI18n } from "vue-i18n";
 
+const { t } = useI18n();
 const { user, showLogoutModal, showEditModal, isSaving, editForm, presetAvatars, feedbackModal, closeFeedback, handleImageError, confirmLogout, performLogout, openEditModal, saveProfile } = useProfileLogic();
 </script>

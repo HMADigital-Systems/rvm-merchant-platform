@@ -2,10 +2,8 @@
   <div class="min-h-screen flex flex-col justify-center items-center bg-gray-50 px-6">
     <div class="bg-white shadow-lg rounded-2xl p-8 w-full max-w-md text-center">
       
-      <h2 class="text-2xl font-semibold text-gray-800 mb-2">Enter Verification Code</h2>
-      <p class="text-sm text-gray-500 mb-6">
-        We have sent a 6-digit code to your phone.
-      </p>
+      <h2 class="text-2xl font-semibold text-gray-800 mb-2">{{ t('otp.title') }}</h2>
+      <p class="text-sm text-gray-500 mb-6">{{ t('otp.subtitle') }}</p> 
 
       <div class="flex justify-center gap-2 mb-6">
         <input 
@@ -28,11 +26,11 @@
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
 
-        <span>{{ isLoading ? statusMessage : "Verify OTP" }}</span>
+        <span>{{ isLoading ? statusMessage : t('otp.button_verify') }}</span>
       </button>
 
       <button @click="router.push('/verify-phone')" class="mt-4 text-sm text-green-600 hover:underline">
-        Wrong number? Go back
+        {{ t('otp.button_back') }}
       </button>
 
       <p v-if="errorMessage" class="mt-4 text-sm text-red-500">{{ errorMessage }}</p>
@@ -45,8 +43,10 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { registerUserWithAutoGCM, runOnboarding } from "../services/autogcm.js";
-import { supabase, getOrCreateUser } from "../services/supabase.js"; // ✅ Import supabase client
+import { supabase, getOrCreateUser } from "../services/supabase.js"; // Import supabase client
+import { useI18n } from "vue-i18n";
 
+const { t } = useI18n();
 const router = useRouter();
 const otp = ref(["", "", "", "", "", ""]);
 const isLoading = ref(false);
@@ -80,7 +80,7 @@ const verifyOTP = async () => {
   
   isLoading.value = true;
   errorMessage.value = "";
-  statusMessage.value = "Verifying Code..."; 
+  statusMessage.value = t('otp.status_verifying'); 
 
   try {
     if (!window.confirmationResult) {
@@ -111,7 +111,7 @@ const verifyOTP = async () => {
       const chinesePhone = convertToChineseFormat(finalPhone);
       if (chinesePhone !== finalPhone) {
         console.log(`🔄 Attempt 2: Retrying with Chinese Format: ${chinesePhone}`);
-        statusMessage.value = "Retrying alternative format..."; 
+        statusMessage.value = t('otp.status_retrying'); 
         try {
             response = await registerUserWithAutoGCM("", chinesePhone, "");
             usedPhoneForAutoGCM = chinesePhone;
@@ -129,7 +129,7 @@ const verifyOTP = async () => {
     console.log(`✅ Success! Registered as: ${usedPhoneForAutoGCM}`);
     localStorage.setItem("autogcmUser", JSON.stringify(response.data));
 
-    statusMessage.value = "Binding Account...";
+    statusMessage.value = t('otp.status_binding');
 
     // 4. BIND GOOGLE ACCOUNT TO SUPABASE
     // Retrieve the Google Info we saved in Login.vue
@@ -149,7 +149,7 @@ const verifyOTP = async () => {
     localStorage.removeItem("tempGoogleUser");
 
     // 5. Onboarding & Redirect
-    statusMessage.value = "Finalizing..."; 
+    statusMessage.value = t('otp.status_finalizing'); 
     await runOnboarding(finalPhone); 
 
     if (response.data.isNewUser === 0 && supabaseUser?.nickname && supabaseUser.nickname !== 'New User') {

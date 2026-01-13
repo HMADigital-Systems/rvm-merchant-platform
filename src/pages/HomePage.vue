@@ -31,8 +31,8 @@
             </p>
             <div v-else class="h-7 w-20 bg-gray-200 animate-pulse rounded mb-1"></div>
             
-            <p class="text-xs text-gray-500 mt-1 uppercase tracking-wide">Total Delivered Weight</p>
-          </div>
+            <p class="text-xs text-gray-500 mt-1 uppercase tracking-wide">{{ t('home.total_weight') }}</p>
+        </div>
         </div>
         
         <div 
@@ -41,12 +41,12 @@
         >
            <div class="flex flex-col items-center mb-1">
              <p class="font-bold text-xl text-green-700">{{ user.balance }} pts</p>
-             <p class="text-xs text-gray-500 mt-1 uppercase tracking-wide">Balance</p>
+             <p class="text-xs text-gray-500 mt-1 uppercase tracking-wide">{{ t('home.balance') }}</p>
            </div>
 
            <div class="mt-2 bg-amber-50 text-amber-600 text-[10px] px-3 py-1 rounded-full border border-amber-100 flex items-center shadow-sm">
               <span :class="{'animate-pulse': user.pendingEarnings > 0}" class="mr-1 text-xs">●</span> 
-              +{{ user.pendingEarnings || 0 }} pending
+              +{{ user.pendingEarnings || 0 }} {{ t('home.pending') }}
            </div>
         </div>
       </div>
@@ -56,7 +56,7 @@
       <div class="flex items-center justify-between mb-3">
         <div class="flex items-center space-x-2">
           <Recycle class="w-5 h-5 text-green-600" />
-          <h3 class="text-lg font-semibold text-green-700">Nearby Stations</h3>
+          <h3 class="text-lg font-semibold text-green-700">{{ t('home.nearby') }}</h3>
           <span v-if="!isLoading" class="text-sm text-gray-500">({{ rvmList.length }})</span>
         </div>
       </div>
@@ -96,8 +96,10 @@ import { Swiper, SwiperSlide } from "swiper/vue";
 import { Autoplay, Pagination } from "swiper/modules";
 import "swiper/css";
 import "swiper/css/pagination";
+import { useI18n } from "vue-i18n";
 
 import { useHomeLogic } from "../composables/useHomeLogic.js";
 
+const { t } = useI18n();
 const { user, rvmList, sliderImages, isLoading } = useHomeLogic();
 </script>

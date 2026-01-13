@@ -2,7 +2,7 @@
   <div class="min-h-screen flex flex-col justify-center items-center bg-gray-50 px-6">
     <div class="bg-white shadow-lg rounded-2xl p-8 w-full max-w-md text-center">
 
-      <h2 class="text-2xl font-semibold mb-6">Complete Your Profile</h2>
+      <h2 class="text-2xl font-semibold mb-6">{{ t('complete_profile.title') }}</h2>
 
       <div class="flex flex-col items-center mb-6">
         <div class="relative">
@@ -16,11 +16,11 @@
             Google
           </span>
         </div>
-        <p class="text-xs text-gray-400 mt-2">Photo from your Account</p>
+        <p class="text-xs text-gray-400 mt-2">{{ t('complete_profile.photo_label') }}</p>
       </div>
 
       <div class="mb-4 text-left">
-        <label class="block text-sm text-gray-600 mb-1">Nickname</label>
+        <label class="block text-sm text-gray-600 mb-1">{{ t('complete_profile.nickname_label') }}</label>
         <input 
           v-model="nickname" 
           placeholder="Enter nickname"
@@ -28,13 +28,13 @@
         />
         <p v-if="isLegacyFound" class="text-xs text-green-600 mt-1 flex items-center gap-1">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-          Found existing name from old system
+          {{ t('complete_profile.legacy_found') }}
         </p>
       </div>
 
       <button @click="saveProfile"
         class="w-full mt-4 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition font-medium shadow-md">
-        Save & Continue
+        {{ t('complete_profile.button') }}
       </button>
 
     </div>
@@ -46,7 +46,9 @@ import { ref, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { registerUserWithAutoGCM } from "../services/autogcm.js";
 import { supabase } from "../services/supabase.js"; // Import Supabase to save name
+import { useI18n } from "vue-i18n";
 
+const { t } = useI18n();
 const router = useRouter();
 const route = useRoute(); // To access query params
 

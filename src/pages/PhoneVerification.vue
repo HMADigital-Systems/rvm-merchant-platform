@@ -2,11 +2,11 @@
   <div class="min-h-screen flex flex-col justify-center items-center bg-gray-50 px-6">
     <div class="bg-white shadow-lg rounded-2xl p-8 w-full max-w-md text-center">
       
-      <h2 class="text-2xl font-semibold text-gray-800 mb-2">Verify Your Phone</h2>
-      <p class="text-sm text-gray-500 mb-6">Enter your phone number to continue.</p>
+      <h2 class="text-2xl font-semibold text-gray-800 mb-2">{{ t('phone.title') }}</h2>
+      <p class="text-sm text-gray-500 mb-6">{{ t('phone.subtitle') }}</p>
 
       <div>
-        <label class="block text-sm text-gray-600 mb-1">Phone Number</label>
+        <label class="block text-sm text-gray-600 mb-1">{{ t('phone.label') }}</label>
         <div class="flex items-center border rounded-lg overflow-hidden">
           <span class="bg-gray-100 px-3 text-gray-700 text-sm">+60</span>
           <input v-model="phone" type="tel" placeholder="12 345 6789"
@@ -16,7 +16,7 @@
 
       <button @click="sendOTP" 
         class="w-full mt-6 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition">
-        Send OTP
+        {{ t('phone.button_send') }}
       </button>
 
       <div id="recaptcha-container"></div>
@@ -29,7 +29,9 @@
 import { ref, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { auth, RecaptchaVerifier, signInWithPhoneNumber } from "../firebase.js";
+import { useI18n } from "vue-i18n";
 
+const { t } = useI18n();
 const router = useRouter();
 const phone = ref("");
 

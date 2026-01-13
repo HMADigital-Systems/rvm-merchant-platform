@@ -11,14 +11,17 @@
 
     <div class="flex flex-col">
       <div class="flex items-center gap-1">
-        <h2 class="text-lg font-bold text-green-700">Hello, {{ user.name }}</h2>
+        <h2 class="text-lg font-bold text-green-700">{{ t('home.hello') }}, {{ user.name }}</h2>
       </div>
-      <p class="text-gray-500 text-sm">Ready to recycle?</p>
+      <p class="text-gray-500 text-sm">{{ t('home.ready') }}</p>
     </div>
   </header>
 </template>
 
 <script setup>
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 defineProps({
   user: {
     type: Object,
