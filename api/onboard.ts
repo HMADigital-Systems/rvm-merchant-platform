@@ -290,13 +290,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }).eq('user_id', user.id).eq('merchant_id', fallbackMerchantId);
     }
 
+    // Only use Vendor name if local is "New User", "RVM User", or missing.
+    const currentName = user.nickname;
+    const shouldUseLocalName = currentName && currentName !== 'New User' && currentName !== 'RVM User';
+    
+    const finalNickname = shouldUseLocalName 
+        ? currentName 
+        : (profile?.data?.nikeName || profile?.data?.name || 'User');
+
+    // Only use Vendor Avatar if local is missing
+    const finalAvatar = user.avatar_url 
+        ? user.avatar_url 
+        : (profile?.data?.imgUrl || profile?.data?.avatarUrl);
+
     await supabase.from('users').update({
         lifetime_integral: livePoints,
         total_weight: Number(totalImportedWeight.toFixed(2)),
         last_synced_at: new Date().toISOString(),
-        nickname: profile?.data?.nikeName || profile?.data?.name || 'User',
+        nickname: finalNickname, // ✅ Uses Google Name if available
         vendor_user_no: profile?.data?.userNo,
-        avatar_url: profile?.data?.imgUrl || profile?.data?.avatarUrl || user.avatar_url
+        avatar_url: finalAvatar  // ✅ Uses Google Photo if available
     }).eq('id', user.id);
 
     const isProduction = process.env.NODE_ENV === 'production';
