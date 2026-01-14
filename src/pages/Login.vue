@@ -5,19 +5,35 @@
     <h2 class="text-2xl font-bold text-green-700 mb-2">{{ t('login.welcome') }}</h2>
     <p class="text-gray-500 mb-6 text-center">{{ t('login.subtitle') }}</p>
 
-    <button class="gsi-material-button" @click="handleGoogleLogin" :disabled="isLoading">
-      <div class="gsi-material-button-content-wrapper">
-        <div class="gsi-material-button-icon">
-           </div>
-        <span class="gsi-material-button-contents">
-          {{ isLoading ? t('login.signing_in') : t('login.google_btn') }}
-        </span>
+    <button 
+      class="relative flex items-center justify-center bg-white rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 py-3 px-8 gap-3 group w-full max-w-[280px]"
+      @click="handleGoogleLogin" 
+      :disabled="isLoading"
+    >
+      <div v-if="isLoading" class="absolute inset-0 bg-white/80 flex items-center justify-center rounded-full z-10">
+        <div class="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
+
+      <div class="w-5 h-5 flex-shrink-0">
+        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+          <path fill="none" d="M0 0h48v48H0z"></path>
+        </svg>
+      </div>
+      
+      <span class="text-gray-700 font-medium tracking-wide group-hover:text-gray-900 transition-colors">
+        {{ t('login.google_btn') }}
+      </span>
     </button>
 
-    <p class="mt-6 text-sm text-gray-500">{{ t('login.terms') }}</p>
+    <p class="mt-8 text-xs text-gray-400 max-w-xs text-center leading-relaxed">{{ t('login.terms') }}</p>
     
-    <p v-if="errorMessage" class="mt-4 text-sm text-red-500 font-bold">{{ errorMessage }}</p>
+    <p v-if="errorMessage" class="mt-4 text-sm text-red-500 font-bold bg-red-50 px-4 py-2 rounded-lg">
+      {{ errorMessage }}
+    </p>
   </div>
 </template>
 
@@ -30,7 +46,7 @@ import { useI18n } from "vue-i18n";
 
 // Services
 import { syncUser, runOnboarding } from "../services/autogcm.js";
-import { supabase, getOrCreateUser } from "../services/supabase.js"; //Import supabase client
+import { supabase } from "../services/supabase.js"; 
 
 const { t } = useI18n();
 const router = useRouter();
@@ -50,73 +66,53 @@ const handleGoogleLogin = async () => {
     const user = result.user;
     const email = user.email;
 
-    // 2. CHECK SUPABASE (SECURE RPC): Is this email already linked?
-    // We use .rpc() because RLS prevents direct table access for anon users
+    // 2. CHECK SUPABASE
     const { data: dbUser, error } = await supabase
       .rpc('get_user_by_email', { check_email: email });
 
     if (error) {
         console.error("RPC Error:", error);
-        // Don't throw here, let it fall through to "New User" logic if strictly needed, 
-        // but usually RPC errors are critical.
     }
 
     if (dbUser && dbUser.phone) {
-      // USER FOUND: SMART LOGIN (SKIP OTP)
       console.log("🔹 Smart Login: Email found, logging in as", dbUser.phone);
       
-      // Sync with RVM System (AutoGCM) to get session token
       const res = await syncUser(
           dbUser.phone, 
-          dbUser.nickname || "",  // Pass existing nickname
-          dbUser.avatar_url || "" // Pass existing avatar
+          dbUser.nickname || "",  
+          dbUser.avatar_url || "" 
       );
       
       if (res.code === 200 && res.data) {
-        // Save Session
-        //localStorage.setItem("autogcmUser", JSON.stringify(res.data));
-        
-      const sessionData = {
-            ...res.data, // Keep token/id from API
-            nikeName: dbUser.nickname || res.data.nikeName || "User", // Trust DB first
-            avatarUrl: dbUser.avatar_url || res.data.avatarUrl || ""  // Trust DB first
+        const sessionData = {
+            ...res.data, 
+            nikeName: dbUser.nickname || res.data.nikeName || "User", 
+            avatarUrl: dbUser.avatar_url || res.data.avatarUrl || ""  
         };
 
         localStorage.setItem("autogcmUser", JSON.stringify(sessionData));
-        
-        // Ensure Supabase stats are synced
         await runOnboarding(dbUser.phone);
-
         router.push("/home-page");
-        return; // Stop here
+        return; 
       }
     }
 
-    // 3. NEW USER / NOT LINKED: Proceed to OTP Flow
+    // 3. NEW USER
     console.log("🔸 New or Unlinked Account: Proceeding to Phone Verification");
     
     const googleUser = {
       nickname: user.displayName || "User",
       avatar: user.photoURL || "",
-      email: user.email // Store email to bind it later
+      email: user.email 
     };
     localStorage.setItem("tempGoogleUser", JSON.stringify(googleUser));
 
-    // Check if we have a legacy phone stored locally, otherwise ask for input
-    const existingUser = JSON.parse(localStorage.getItem("autogcmUser") || "{}");
-    if (existingUser.phone) {
-       router.push("/verify-phone"); // Or auto-send OTP if you prefer
-    } else {
-       router.push("/verify-phone");
-    }
+    router.push("/verify-phone");
 
   } catch (error) {
     console.error("❌ Login Error:", error);
-    // Ignore "PGRST116" error (JSON object requested, multiple (or no) rows returned) - means user not found
     if (error.code !== "PGRST116") { 
         errorMessage.value = "Login failed: " + error.message;
-    } else {
-        // If not found, just proceed (this block might not be reached depending on Supabase version, usually .single() returns error if empty)
     }
   } finally {
     isLoading.value = false;
@@ -125,47 +121,5 @@ const handleGoogleLogin = async () => {
 </script>
 
 <style scoped>
-.gsi-material-button {
-  background-color: white;
-  border: 1px solid #747775;
-  border-radius: 4px;
-  box-sizing: border-box;
-  color: #1f1f1f;
-  cursor: pointer;
-  font-family: 'Roboto', arial, sans-serif;
-  font-size: 14px;
-  height: 40px;
-  padding: 0 12px;
-  transition: background-color .218s, border-color .218s;
-  user-select: none;
-  min-width: 200px;
-}
-
-.gsi-material-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.gsi-material-button-content-wrapper {
-  align-items: center;
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  height: 100%;
-}
-
-.gsi-material-button-icon {
-  height: 20px;
-  margin-right: 12px;
-  min-width: 20px;
-  width: 20px;
-}
-
-.gsi-material-button-contents {
-  flex-grow: 1;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* No custom CSS needed anymore - everything is handled by Tailwind */
 </style>

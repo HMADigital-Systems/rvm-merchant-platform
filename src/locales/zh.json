@@ -121,5 +121,17 @@
   "uco": "废弃食用油",
   "kertas": "纸张",
   "plastik_aluminium": "塑料 / 铝罐"
-}
+},
+"rvm": {
+    "status": {
+      "online": "在线",
+      "offline": "离线",
+      "maintenance": "维护中",
+      "bin_full": "满箱"
+    },
+    "state": {
+      "available": "可用",
+      "bin_full": "满箱"
+    }
+  }
 }

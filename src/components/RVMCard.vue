@@ -10,7 +10,7 @@
             'bg-red-500': status === 'Bin Full' || status === 'Maintenance',
             'bg-gray-500': status === 'Offline'
         }">
-        {{ status }}
+        {{ translateStatus(status) }}
       </span>
     </div>
 
@@ -33,7 +33,7 @@
                   'bg-orange-500': item.color === 'orange',
                   'bg-blue-500': item.color === 'blue'
                 }"></div>
-              <span class="text-xs font-semibold text-gray-700">{{ item.label }}</span>
+              <span class="text-xs font-semibold text-gray-700">{{ translateWaste(item.label) }}</span>
             </div>
 
             <span class="text-xs font-bold uppercase tracking-wide"
@@ -42,7 +42,7 @@
                 'text-red-500': item.statusColor === 'red',
                 'text-orange-500': item.statusColor === 'orange'
               }">
-              {{ item.statusText }} ({{ item.percent }}%)
+              {{ translateState(item.statusText) }} ({{ item.percent }}%)
             </span>
           </div>
 
@@ -66,6 +66,10 @@
 </template>
 
 <script setup>
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
+
 defineProps({
   image: { type: String, default: "https://lassification.oss-cn-shenzhen.aliyuncs.com/static/mini/imgv2/cb83c4f1-6d9b-4455-a994-01f53b08c9ba.jpg" },
   status: String,
@@ -74,4 +78,26 @@ defineProps({
   address: String,
   compartments: Array, 
 });
+
+// 1. Translate Machine Status (Online, Maintenance, etc)
+const translateStatus = (status) => {
+  if (!status) return "";
+  const key = status.toLowerCase().replace(/\s+/g, '_'); // "Bin Full" -> "bin_full"
+  return t(`rvm.status.${key}`);
+};
+
+// 2. Translate Waste Name (Paper, UCO, etc) - Same logic as Dashboard
+const translateWaste = (name) => {
+  if (!name) return "";
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const translated = t(`waste.${key}`);
+  return translated.includes('waste.') ? name : translated;
+};
+
+// 3. Translate Compartment State (Available, Bin Full)
+const translateState = (state) => {
+  if (!state) return "";
+  const key = state.toLowerCase().replace(/\s+/g, '_'); // "Available" -> "available"
+  return t(`rvm.state.${key}`);
+};
 </script>

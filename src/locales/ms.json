@@ -121,5 +121,17 @@
   "uco": "Minyak Masak Terpakai",
   "kertas": "Kertas",
   "plastik_aluminium": "Plastik / Aluminium"
-}
+},
+"rvm": {
+    "status": {
+      "online": "Dalam Talian",
+      "offline": "Luar Talian",
+      "maintenance": "Penyelenggaraan",
+      "bin_full": "Tong Penuh"
+    },
+    "state": {
+      "available": "Sedia",
+      "bin_full": "Penuh"
+    }
+  }
 }

@@ -121,5 +121,17 @@
   "uco": "Used Cooking Oil",
   "kertas": "Paper",
   "plastik_aluminium": "Plastic / Aluminium"
-}
+},
+"rvm": {
+    "status": {
+      "online": "Online",
+      "offline": "Offline",
+      "maintenance": "Maintenance",
+      "bin_full": "Bin Full"
+    },
+    "state": {
+      "available": "Available",
+      "bin_full": "Bin Full"
+    }
+  }
 }
