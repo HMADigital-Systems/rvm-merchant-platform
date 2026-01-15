@@ -3,7 +3,10 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY!;
+// 🔴 WAS: const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY!;
+// 🟢 FIX: Use Service Role Key to bypass RLS policies
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY!;
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 //  Define your Debug URL
@@ -18,7 +21,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ------------------------------------------------------------------
   // FAN-OUT: Forward to Webhook.site (Debugging)
   // ------------------------------------------------------------------
-  // We place this at the VERY TOP so it runs before any DB logic crashes
   if (DEBUG_WEBHOOK_URL) {
       axios.post(DEBUG_WEBHOOK_URL, data).catch(err => {
           console.error("⚠️ Failed to forward to debug webhook:", err.message);
@@ -131,13 +133,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           // 🔥 THE MISSING PIECE: Create Wallet Link so User appears in Frontend 🔥
           if (internalUserId && merchantId) {
-             // We use upsert to ensure we don't crash if wallet exists
-             await supabase.from('merchant_wallets').upsert({
-                 merchant_id: merchantId,
-                 user_id: internalUserId,
-                 current_balance: 0, // Default to 0, let verification add money
-                 total_earnings: 0
-             }, { onConflict: 'user_id, merchant_id' });
+              // We use upsert to ensure we don't crash if wallet exists
+              await supabase.from('merchant_wallets').upsert({
+                  merchant_id: merchantId,
+                  user_id: internalUserId,
+                  current_balance: 0, // Default to 0, let verification add money
+                  total_earnings: 0
+              }, { onConflict: 'user_id, merchant_id' });
           }
       }
 
@@ -207,7 +209,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function logCleaning(deviceNo: string, type: string, weight: number, url: string) {
     const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY!;
+    // 🟢 FIX: Use Service Role Key here too!
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY!;
+    
     const supabase = createClient(supabaseUrl, supabaseKey);
     await supabase.from('cleaning_records').insert([{
         device_no: deviceNo, waste_type: type, bag_weight_collected: weight,

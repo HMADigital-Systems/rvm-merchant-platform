@@ -50,15 +50,32 @@ const handleAdjustmentConfirm = async (payload: { userId: string, amount: number
 };
 
 // Handle event from Child Component
-const handleCreateUserConfirm = async (payload: { nickname: string, phone: string }) => {
-    // Call the new Import logic
-    const res = await importUser(payload.nickname, payload.phone);
+const handleCreateUserConfirm = async (payload: { nickname: string, phone: string }[]) => {
+    let successCount = 0;
+    let failCount = 0;
+
+    // Loop through the array and process one by one
+    for (const user of payload) {
+        // reuse your existing importUser composable
+        const res = await importUser(user.nickname, user.phone);
+        if (res?.success) {
+            successCount++;
+        } else {
+            console.error(`Failed to import ${user.phone}:`, res?.error);
+            failCount++;
+        }
+    }
     
-    if (res?.success) {
-        showCreateModal.value = false;
-        triggerFeedback('Success', 'User Imported & Synced!', false);
+    // Close modal after all are processed
+    showCreateModal.value = false;
+
+    // Show Summary Feedback
+    if (failCount === 0) {
+        triggerFeedback('Batch Complete', `Successfully imported ${successCount} users!`, false);
+    } else if (successCount === 0) {
+        triggerFeedback('Batch Failed', `Failed to import all ${failCount} users. Check console.`, true);
     } else {
-        triggerFeedback('Error', res?.error || 'Import failed', true);
+        triggerFeedback('Partial Success', `Imported: ${successCount} \nFailed: ${failCount}.`, true);
     }
 };
 

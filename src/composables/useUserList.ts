@@ -24,7 +24,7 @@ export function useUserList() {
             .from('users')
             .select(`
                 *,
-                merchant_wallets!inner (
+                merchant_wallets (
                     current_balance,
                     total_earnings,
                     merchant_id,
@@ -174,29 +174,23 @@ export function useUserList() {
   };
 
   
-  // 3. Create Test User (Updated)
-  // 3. Import User (Replaces createTestUser)
+  // 3. Import User (Updated to match Login Flow)
   const importUser = async (nickname: string, phone: string) => {
       isSubmitting.value = true;
       try {
-          // A. Create/Ensure User Exists in DB
-          // We set is_active: true so they are ready to go.
+          // A. Create/Ensure User Exists in DB locally
           const { data: newUser, error: uError } = await supabase
               .from('users')
               .upsert({ 
                   phone, 
                   nickname, 
                   is_active: true,
-                  // We let the onboarding script fill in the vendor_user_no
               }, { onConflict: 'phone' })
-              .select()
-              .single();
+              .select().single();
 
           if (uError) throw uError;
 
           // B. Create Empty Wallet (Safety Step)
-          // We do this BEFORE sync. If sync fails (e.g. timeout), the user 
-          // still appears in your list because the wallet exists.
           if (auth.merchantId) {
               const { error: wError } = await supabase
                   .from('merchant_wallets')
@@ -206,22 +200,30 @@ export function useUserList() {
                       current_balance: 0,
                       total_earnings: 0
                   });
-              
-              // Ignore duplicate key error (if wallet already exists)
               if (wError && wError.code !== '23505') throw wError;
           }
 
-          // C. Trigger The "Onboard" Webhook
-          // This pulls history, calculates points, and updates the wallet real-time.
-          // Note: We use the relative path assuming the function is hosted at /api/webhook
+          // C. THE FIX: Replicate "Login Flow" sequence
+          
+          // 1. Call Onboard API (This is what Login.vue does first via syncUser)
+          // This fetches the Name & Vendor ID so the user is no longer "ghosted"
+          try {
+             await axios.post('/api/onboard', { phone });
+          } catch (e) {
+             console.warn("Onboard sync warning:", e);
+             // We continue even if this warns, because the webhook might fix it
+          }
+
+          // 2. Call Webhook (This is what Login.vue does second via runOnboarding)
+          // This fetches the heavy history and calculates points
           await axios.post('/api/webhook', { phone });
 
-          await fetchUsers(); // Refresh the list to show new balance
+          // D. Refresh List
+          await fetchUsers(); 
           return { success: true };
 
       } catch (err: any) {
           console.error("Import failed:", err);
-          // Return success: false but pass the error message
           return { success: false, error: err.response?.data?.error || err.message };
       } finally {
           isSubmitting.value = false;
