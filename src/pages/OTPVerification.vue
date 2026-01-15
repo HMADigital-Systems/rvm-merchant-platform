@@ -155,19 +155,33 @@ const verifyOTP = async () => {
     statusMessage.value = t('otp.status_finalizing'); 
     await runOnboarding(finalPhone); 
 
-    // ✅ SMART REDIRECT LOGIC
-    // Condition 1: Not a new user in machine system (isNewUser === 0)
-    // Condition 2: Has a valid profile in our Supabase DB (not 'New User')
-    const hasValidLocalName = supabaseUser?.nickname && supabaseUser.nickname !== 'New User' && supabaseUser.nickname !== 'User';
+    // ✅ CHECK LOCAL NAME STATUS (Supabase)
+    const localName = supabaseUser?.nickname || "";
+    const isLocalGeneric = 
+        !localName || 
+        localName === 'New User' || 
+        localName === 'User' || 
+        localName === 'RVM User' ||
+        localName === finalPhone;
 
-    if (response.data.isNewUser === 0 && hasValidLocalName) {
-      // Returning user with fully set up account -> Go Home
+    // ✅ CHECK VENDOR NAME STATUS (Machine API)
+    const vendorName = response.data?.nikeName || "";
+    const isVendorGeneric = 
+        !vendorName || 
+        vendorName === "User" || 
+        vendorName === "RVM User";
+
+    // 🔴 REINFORCED DECISION LOGIC
+    // Go Home ONLY if:
+    // 1. User exists in Machine System (isNewUser === 0)
+    // 2. AND Local Name is NOT generic
+    // 3. AND Vendor Name is NOT generic (Double safety)
+    if (response.data.isNewUser === 0 && !isLocalGeneric && !isVendorGeneric) {
       router.push("/home-page");
     } else {
-      // New User OR Returning User with missing profile -> Go to Complete Profile
+      // Profile is incomplete -> Go to Complete Profile
       localStorage.setItem("pendingPhoneVerified", finalPhone);
       
-      // Pass the name we safely fetched from the machine API
       const legacyName = response.data?.nikeName || response.data?.name || '';
       
       router.push({ 

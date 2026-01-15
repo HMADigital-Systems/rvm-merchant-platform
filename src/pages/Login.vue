@@ -56,6 +56,19 @@ const provider = new GoogleAuthProvider();
 const isLoading = ref(false);
 const errorMessage = ref("");
 
+// Helper to check if a name is "generic" (User, New User, Phone Number)
+const isGenericName = (name, phone) => {
+  if (!name) return true;
+  const lower = name.toLowerCase();
+  return (
+    lower === "user" || 
+    lower === "new user" || 
+    lower === "rvm user" ||
+    lower === "null" ||
+    name === phone
+  );
+};
+
 const handleGoogleLogin = async () => {
   isLoading.value = true;
   errorMessage.value = "";
@@ -67,24 +80,28 @@ const handleGoogleLogin = async () => {
     const email = user.email;
 
     // 2. CHECK SUPABASE
+    // Ensure get_user_by_email returns 'vendor_user_no'
     const { data: dbUser, error } = await supabase
       .rpc('get_user_by_email', { check_email: email });
 
-    if (error) {
-        console.error("RPC Error:", error);
-    }
+    if (error) console.error("RPC Error:", error);
 
     if (dbUser && dbUser.phone) {
       console.log("🔹 Smart Login: Email found, logging in as", dbUser.phone);
       
-      // FIX: Use 'undefined' if the local nickname is suspicious
-      const safeName = (dbUser.nickname === 'New User' || dbUser.nickname === 'User') 
-                       ? undefined 
-                       : dbUser.nickname;
+      const isAlreadyOnboarded = !!dbUser.vendor_user_no;
+      const currentLocalName = dbUser.nickname || "";
+      
+      // Determine if the *current* local name is generic
+      const localNameIsGeneric = isGenericName(currentLocalName, dbUser.phone);
 
+      // Handle Nickname Safety for Sync (Don't overwrite with "User")
+      const safeName = localNameIsGeneric ? undefined : currentLocalName;
+
+      // 1. Sync User (Fast - gets latest data from API)
       const res = await syncUser(
           dbUser.phone, 
-          safeName, // Pass safe name or undefined
+          safeName,
           dbUser.avatar_url 
       );
       
@@ -96,13 +113,55 @@ const handleGoogleLogin = async () => {
         };
 
         localStorage.setItem("autogcmUser", JSON.stringify(sessionData));
-        await runOnboarding(dbUser.phone);
-        router.push("/home-page");
+
+        // ⚡️ REDIRECT DECISION LOGIC ⚡️
+        
+        // CASE A: User is fully onboarded AND has a valid name locally.
+        // We can skip everything and go home.
+        if (isAlreadyOnboarded && !localNameIsGeneric) {
+            console.log("⏩ User onboarded & Verified. Going Home.");
+            runOnboarding(dbUser.phone); // Background refresh
+            router.push("/home-page");
+            return;
+        }
+
+        // CASE B: User is new OR has a generic name.
+        // We MUST run the onboarding now to get the latest data.
+        console.log("⏳ Profile check needed. Syncing...");
+        
+        // Critical: Save phone for CompleteProfile page
+        localStorage.setItem("pendingPhoneVerified", dbUser.phone); 
+
+        // Wait for full sync
+        await runOnboarding(dbUser.phone); 
+
+        // Re-evaluate after sync: Did the API return a valid name?
+        // Note: res.data is the fresh data from the API call we just made.
+        const freshApiName = res.data.nikeName || res.data.name || "";
+        const apiNameIsGeneric = isGenericName(freshApiName, dbUser.phone);
+
+        // If the API name is ALSO generic, force them to set it.
+        // If the API name is good (e.g. "Ariff" from old system), we can trust it (assuming onboard saved it).
+        // But to be safe for "First Time" experience, if they were generic locally, 
+        // we usually want them to confirm their profile unless it's a perfect match.
+        
+        if (apiNameIsGeneric) {
+             console.log("🚨 Generic Name detected. Redirecting to Complete Profile.");
+             router.push({ 
+                path: "/complete-profile", 
+                query: { legacyName: freshApiName } 
+            });
+        } else {
+            // API has a good name ("Ariff"). 
+            // Since we just ran onboarding, that name is now saved to DB.
+            console.log("✅ Legacy Name found (" + freshApiName + "). Going Home.");
+            router.push("/home-page");
+        }
         return; 
       }
     }
 
-    // 3. NEW USER
+    // 3. NEW USER (No email match)
     console.log("🔸 New or Unlinked Account: Proceeding to Phone Verification");
     
     const googleUser = {

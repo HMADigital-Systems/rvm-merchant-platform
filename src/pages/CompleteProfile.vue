@@ -45,12 +45,13 @@
 import { ref, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { registerUserWithAutoGCM } from "../services/autogcm.js";
-import { supabase } from "../services/supabase.js"; // Import Supabase to save name
+// 🔴 FIX 1: Import 'getOrCreateUser' correctly
+import { supabase, getOrCreateUser } from "../services/supabase.js"; 
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 const router = useRouter();
-const route = useRoute(); // To access query params
+const route = useRoute(); 
 
 const nickname = ref("");
 const avatar = ref("");
@@ -68,13 +69,12 @@ onMounted(() => {
     isLegacyFound.value = true;
   }
 
-  // 2. Check for Google Temp Data (Optional, if you have Google Login)
+  // 2. Check for Google Temp Data 
   const tempUser = JSON.parse(localStorage.getItem("tempGoogleUser") || "{}");
   if (tempUser.avatar) {
     avatar.value = tempUser.avatar;
     isGoogleAvatar.value = true;
   }
-  // Only override nickname from Google if we didn't find a legacy one
   if (tempUser.nickname && !nickname.value) {
     nickname.value = tempUser.nickname;
   }
@@ -82,6 +82,15 @@ onMounted(() => {
 
 const saveProfile = async () => {
   const phone = localStorage.getItem("pendingPhoneVerified");
+
+  // 🔴 FIX 2: Safety Check for Phone
+  // Prevents "Syncing User: null" error if session is lost
+  if (!phone) {
+      alert("Session Error: Missing phone number. Please login again.");
+      router.push("/login");
+      return;
+  }
+
   if (!nickname.value) return alert("Please enter a nickname.");
 
   try {
@@ -89,21 +98,16 @@ const saveProfile = async () => {
     const response = await registerUserWithAutoGCM("", phone, nickname.value, avatar.value);
 
     if (response.code === 200) {
-      // 🔴 OLD CODE (Causing the bug):
-      // localStorage.setItem("autogcmUser", JSON.stringify(response.data));
-
-      // 🟢 NEW CODE (Fix):
-      // Manually ensure the specific fields your app needs are set correctly
       const sessionData = {
-        ...response.data,           // Keep all data from API
-        nikeName: nickname.value,   // FORCE the legacy field name your app uses
-        nickname: nickname.value,   // Set the correct field name too
-        avatarUrl: avatar.value     // Ensure avatar is set
+        ...response.data,           
+        nikeName: nickname.value,   
+        nickname: nickname.value,   
+        avatarUrl: avatar.value     
       };
 
       localStorage.setItem("autogcmUser", JSON.stringify(sessionData));
       
-      // 3. Sync to Supabase (Uses Secure RPC)
+      // 3. Sync to Supabase (Now works because we imported it)
       await getOrCreateUser(phone, nickname.value, avatar.value);
 
       // 4. Cleanup & Redirect
