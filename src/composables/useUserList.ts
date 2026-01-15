@@ -20,6 +20,7 @@ export function useUserList() {
     loading.value = true;
     try {
         // 3. Start building the query
+        // 🟢 FIX: Added 'withdrawals' to selection
         let query = supabase
             .from('users')
             .select(`
@@ -29,16 +30,21 @@ export function useUserList() {
                     total_earnings,
                     merchant_id,
                     total_weight
+                ),
+                withdrawals (
+                    amount,
+                    status,
+                    merchant_id
                 )
             `)
             .order('created_at', { ascending: false });
 
-        // 4. Apply Filter: Only filter by merchant_id if NOT Platform Owner
+        // 4. Apply Filter
         if (!isPlatformOwner && auth.merchantId) {
             query = query.eq('merchant_wallets.merchant_id', auth.merchantId); 
         }
 
-        // 5. Execute Query (Once)
+        // 5. Execute Query
         const { data, error } = await query;
 
         if (error) throw error;
@@ -48,26 +54,41 @@ export function useUserList() {
             let currentBalance = 0;
             let totalEarnings = 0;
             let specificWeight = 0;
+            let totalWithdrawn = 0; // <--- New Variable
+
+            const userWithdrawals = u.withdrawals || [];
 
             if (auth.merchantId) {
                 // 🏪 MERCHANT VIEW
                 const wallet = u.merchant_wallets?.find((w: any) => w.merchant_id === auth.merchantId);
                 
-                currentBalance = wallet ? Number(wallet.current_balance) : 0;
                 totalEarnings = wallet ? Number(wallet.total_earnings) : 0;
                 specificWeight = wallet ? Number(wallet.total_weight) : 0;
+                
+                // 🟢 FIX: Calculate Withdrawals for THIS Merchant
+                totalWithdrawn = userWithdrawals
+                    .filter((w: any) => w.merchant_id === auth.merchantId && w.status !== 'REJECTED')
+                    .reduce((sum: number, w: any) => sum + Number(w.amount), 0);
+
+                // 🟢 FIX: Dynamic Balance (Earnings - Withdrawals)
+                currentBalance = totalEarnings - totalWithdrawn;
             } else {
                 // 👑 SUPER ADMIN VIEW
                 if (u.merchant_wallets && Array.isArray(u.merchant_wallets)) {
-                    currentBalance = u.merchant_wallets.reduce((sum: number, w: any) => sum + Number(w.current_balance || 0), 0);
                     totalEarnings = u.merchant_wallets.reduce((sum: number, w: any) => sum + Number(w.total_earnings || 0), 0);
                     specificWeight = u.merchant_wallets.reduce((sum: number, w: any) => sum + Number(w.total_weight || 0), 0);
                 }
+
+                // Sum ALL withdrawals (excluding rejected)
+                totalWithdrawn = userWithdrawals
+                    .filter((w: any) => w.status !== 'REJECTED')
+                    .reduce((sum: number, w: any) => sum + Number(w.amount), 0);
+
+                currentBalance = totalEarnings - totalWithdrawn;
             }
 
             return {
                 ...u,
-                // 🟢 FIX: Clean the numbers here to avoid 50.279999999
                 balance: Number(currentBalance.toFixed(2)),
                 earnings: Number(totalEarnings.toFixed(2)),
                 total_weight: Number(specificWeight.toFixed(2)) 
@@ -82,7 +103,6 @@ export function useUserList() {
   };
 
   // 2. Adjust Balance (Updated with Category)
-  // 2. Adjust Balance (Fixed TypeScript Error)
   const adjustBalance = async (userId: string, amount: number, note: string, category: 'ADJUSTMENT' | 'WITHDRAWAL') => {
       if (!userId || amount === 0) return;
       isSubmitting.value = true;

@@ -48,22 +48,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select('id').eq('user_id', user.id).eq('transaction_type', 'MIGRATION_ADJUSTMENT').maybeSingle();
     if (existing) return res.status(200).json({ msg: "Already onboarded", debugLog });
 
-    // 3. Vendor Data (IMPROVED)
-    // We construct the payload dynamically.
-    // If we have a GOOD name locally, we send it to update the vendor.
-    // If we don't, we send ONLY the phone so the vendor returns the existing remote profile (without overwriting it).
-    
+    // 3. Vendor Data (Safeguarded)
     const payload: any = { phone };
 
-    // Only sync nickname if it's a real name (not "New User" or empty)
+    // Only sync nickname if it's a real name
     if (user.nickname && user.nickname !== 'New User') {
         payload.nikeName = user.nickname;
     }
 
-    // Only sync avatar if we actually have one
-    if (user.avatar_url) {
+    // FIX: Check if avatar exists AND is a string before using it
+    if (user.avatar_url && typeof user.avatar_url === 'string') {
         payload.avatarUrl = user.avatar_url;
     }
+
 
     // Call the API
     const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', payload);
@@ -156,7 +153,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // --- FIX END ---
 
     // 6. PROCESS LOOP
-    // 🟢 CHANGE: Use .entries() to get the index for the incremental save check
     for (const [index, record] of historyList.entries()) {
         const recordValue = Number(Number(record.integral || 0).toFixed(2));
         const recordWeight = Number(Number(record.totalWeight || record.weight || 0).toFixed(2));
@@ -166,13 +162,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const recordPhone = record.phonenumber || null; 
         
         let photoUrl = null;
-        if (record.imgUrl) photoUrl = record.imgUrl.split(',')[0];
+        
+        // 🟢 FIX: Verify imgUrl is a string before splitting
+        if (record.imgUrl && typeof record.imgUrl === 'string') {
+             photoUrl = record.imgUrl.split(',')[0];
+        }
         
         let wasteType = 'Unknown';
         if (record.rubbishLogDetailsVOList && record.rubbishLogDetailsVOList.length > 0) {
             const detail = record.rubbishLogDetailsVOList[0];
             if (detail.rubbishName) wasteType = detail.rubbishName;
-            if (!photoUrl && detail.imgUrl) photoUrl = detail.imgUrl;
+            
+            // 🟢 FIX: Ensure detail.imgUrl is valid
+            if (!photoUrl && detail.imgUrl && typeof detail.imgUrl === 'string') {
+                photoUrl = detail.imgUrl;
+            }
         }
 
         let ratePerKg = 0;
