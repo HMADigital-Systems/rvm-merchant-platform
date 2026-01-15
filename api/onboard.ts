@@ -65,10 +65,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         payload.avatarUrl = user.avatar_url;
     }
 
-    // This call is now safe: 
-    // - If we have no name, it sends { phone } -> Returns remote info safe & sound.
-    // - If we have a name, it sends { phone, nikeName } -> Updates remote info.
+    // Call the API
     const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', payload);
+    
+    // ⚠️ CRITICAL FIX: Define livePoints here so the rest of the file can use it!
+    const livePoints = Number(profile?.data?.integral || 0);
 
     // 4. Fetch History
     let historyList: any[] = [];
@@ -97,22 +98,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     debugLog.push({ step: "Fetch Complete", totalItems: historyList.length });
 
-    // --- 🔥 FIX STARTS HERE: LOAD MACHINE MAP ---
+    // --- FIX STARTS HERE: LOAD MACHINE MAP ---
     
     // A. Get Default Merchant (Smart Fallback)
-    // 1. First, try to find "Meranti" specifically (or your main operation merchant)
+    // 1. First, try to find "RVM Platform" specifically
     let fallbackMerchantId = null;
     
     const { data: preferredMerchant } = await supabase
         .from('merchants')
         .select('id')
-        .ilike('name', '%Meranti%') // Change 'Meranti' to your actual main merchant name
+        .ilike('name', '%RVM Platform%') // UPDATED: Points to your main account
         .maybeSingle();
 
     if (preferredMerchant) {
         fallbackMerchantId = preferredMerchant.id;
     } else {
-        // 2. If Meranti doesn't exist, grab the first one available
+        // 2. If RVM Platform doesn't exist, grab the first one available (Safety net)
         const { data: anyMerchant } = await supabase.from('merchants').select('id').limit(1).single();
         if (!anyMerchant) return res.status(500).json({ error: "No merchants found in DB" });
         fallbackMerchantId = anyMerchant.id;
