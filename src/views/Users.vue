@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useUserList } from '../composables/useUserList';
-import { ChevronRight, Smartphone, Scale, Search, DownloadCloud, Wallet } from 'lucide-vue-next';
+import { ChevronRight, Smartphone, Scale, Search, DownloadCloud, Wallet, ChevronLeft } from 'lucide-vue-next';
 
 // Components
 import SimpleConfirmModal from '../components/SimpleConfirmModal.vue';
@@ -12,6 +12,10 @@ import UserCreateModal from '../components/UserCreateModal.vue';
 // Logic
 const { users, loading, isSubmitting, adjustBalance, importUser } = useUserList();
 const searchQuery = ref('');
+
+// --- PAGINATION STATE ---
+const currentPage = ref(1);
+const itemsPerPage = ref(10);
 
 // --- MODAL STATES ---
 const showAdjustModal = ref(false);
@@ -37,7 +41,6 @@ const openAdjustModal = (user: any) => {
     showAdjustModal.value = true;
 };
 
-// Handle event from Child Component
 const handleAdjustmentConfirm = async (payload: { userId: string, amount: number, note: string, type: 'ADJUSTMENT'|'WITHDRAWAL' }) => {
     const res = await adjustBalance(payload.userId, payload.amount, payload.note, payload.type);
     
@@ -49,14 +52,11 @@ const handleAdjustmentConfirm = async (payload: { userId: string, amount: number
     }
 };
 
-// Handle event from Child Component
 const handleCreateUserConfirm = async (payload: { nickname: string, phone: string }[]) => {
     let successCount = 0;
     let failCount = 0;
 
-    // Loop through the array and process one by one
     for (const user of payload) {
-        // reuse your existing importUser composable
         const res = await importUser(user.nickname, user.phone);
         if (res?.success) {
             successCount++;
@@ -66,10 +66,8 @@ const handleCreateUserConfirm = async (payload: { nickname: string, phone: strin
         }
     }
     
-    // Close modal after all are processed
     showCreateModal.value = false;
 
-    // Show Summary Feedback
     if (failCount === 0) {
         triggerFeedback('Batch Complete', `Successfully imported ${successCount} users!`, false);
     } else if (successCount === 0) {
@@ -86,6 +84,20 @@ const filteredUsers = computed(() => {
   return users.value.filter(u => 
     u.nickname?.toLowerCase().includes(q) || u.phone?.includes(q)
   );
+});
+
+// Pagination Logic
+const totalPages = computed(() => Math.ceil(filteredUsers.value.length / itemsPerPage.value));
+
+const paginatedUsers = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage.value;
+  const end = start + itemsPerPage.value;
+  return filteredUsers.value.slice(start, end);
+});
+
+// Reset to page 1 when searching
+watch(searchQuery, () => {
+  currentPage.value = 1;
 });
 
 const handleImageError = (e: Event) => {
@@ -108,7 +120,7 @@ const handleImageError = (e: Event) => {
         </button>
     </div>
 
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
         <div class="px-8 py-6 border-b border-gray-100 bg-gray-50">
             <h2 class="text-lg font-bold text-gray-900">Users Overview</h2>
             <p class="text-sm text-gray-500 mt-1">Manage synced users and their wallet balances.</p>
@@ -116,7 +128,7 @@ const handleImageError = (e: Event) => {
 
         <div v-if="loading" class="p-8 text-center text-gray-500">Loading users...</div>
 
-        <div v-else class="overflow-x-auto">
+        <div v-else class="flex-1 overflow-x-auto">
             <table class="w-full text-left">
                 <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold tracking-wider">
                     <tr>
@@ -132,7 +144,7 @@ const handleImageError = (e: Event) => {
                     <tr v-if="filteredUsers.length === 0">
                         <td colspan="6" class="px-6 py-8 text-center text-gray-400 text-sm">No users found.</td>
                     </tr>
-                    <tr v-for="user in filteredUsers" :key="user.id" class="hover:bg-gray-50/80 transition-colors">
+                    <tr v-for="user in paginatedUsers" :key="user.id" class="hover:bg-gray-50/80 transition-colors">
                         <td class="px-6 py-4">
                             <div class="h-10 w-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
                                 <div class="h-10 w-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
@@ -175,6 +187,28 @@ const handleImageError = (e: Event) => {
                     </tr>
                 </tbody>
             </table>
+        </div>
+
+        <div class="bg-gray-50 border-t border-gray-200 px-6 py-4 flex items-center justify-between">
+            <span class="text-sm text-gray-500">
+                Showing <span class="font-medium text-gray-900">{{ filteredUsers.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0 }}</span>
+                to <span class="font-medium text-gray-900">{{ Math.min(currentPage * itemsPerPage, filteredUsers.length) }}</span>
+                of <span class="font-medium text-gray-900">{{ filteredUsers.length }}</span> results
+            </span>
+
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-gray-500">Rows:</span>
+                    <select v-model="itemsPerPage" class="text-sm border-gray-300 rounded-lg bg-white py-1">
+                        <option :value="5">5</option><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option>
+                    </select>
+                </div>
+                <div class="flex items-center bg-white rounded-lg border border-gray-300 overflow-hidden">
+                    <button @click="currentPage--" :disabled="currentPage === 1" class="px-3 py-1 hover:bg-gray-50 disabled:opacity-50 border-r"><ChevronLeft :size="16" /></button>
+                    <span class="px-4 py-1 text-sm font-medium text-gray-700">Page {{ currentPage }} of {{ totalPages || 1 }}</span>
+                    <button @click="currentPage++" :disabled="currentPage >= totalPages" class="px-3 py-1 hover:bg-gray-50 disabled:opacity-50"><ChevronRight :size="16" /></button>
+                </div>
+            </div>
         </div>
     </div>
 
