@@ -67,7 +67,10 @@ const handleSubmit = async () => {
               </div>
               <input 
                 v-model="email"
-                id="email" type="email" required 
+                id="email" 
+                type="email" 
+                autocomplete="email"
+                required 
                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 placeholder="admin@company.com"
               />
@@ -84,7 +87,10 @@ const handleSubmit = async () => {
               </div>
               <input 
                 v-model="password"
-                id="password" type="password" required 
+                id="password" 
+                type="password" 
+                :autocomplete="isRegisterMode ? 'new-password' : 'current-password'"
+                required 
                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                 placeholder="••••••••"
               />
@@ -111,7 +117,6 @@ const handleSubmit = async () => {
             </span>
           </button>
         </form>
-
         <div class="mt-6">
           <div class="relative">
             <div class="absolute inset-0 flex items-center">

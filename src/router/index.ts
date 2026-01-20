@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import { supabase } from '../services/supabase'; // Import Supabase directly for speed
+import { supabase } from '../services/supabase'; 
 
+// 1. IMPORT LAYOUT
+import Layout from '../components/Layout.vue'; 
 
-// Import your views
+// Import Views
 import Dashboard from '../views/Dashboard.vue';
 import Withdrawals from '../views/Withdrawal.vue';
 import Users from '../views/Users.vue';
@@ -18,78 +20,94 @@ const ManageClientSettings = () => import('../views/SuperAdmin/ManageClientSetti
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    // --------------------------------------------------------
+    // 1. PUBLIC ROUTES (No Sidebar/Tabs)
+    // --------------------------------------------------------
     { 
       path: '/login', 
       name: 'login', 
       component: Login,
-      meta: { hideSidebar: true, requiresAuth: false } //  Public Page
+      meta: { hideSidebar: true, requiresAuth: false, title: 'Login' } 
     },
+
+    // --------------------------------------------------------
+    // 2. PROTECTED ROUTES (Wrapped in Layout)
+    // --------------------------------------------------------
     {
       path: '/',
-      name: 'dashboard',
-      component: Dashboard,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/submissions',
-      name: 'submissions',
-      component: () => import('../views/Submissions.vue'),
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/withdrawals',
-      name: 'withdrawals',
-      component: Withdrawals,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/users',
-      name: 'users',
-      component: Users,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/users/:id',
-      name: 'userDetail',
-      component: UserDetail,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/machines',
-      name: 'machines',
-      component: MachineStatus,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    { 
-      path: '/admins', 
-      component: AdminManager,
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-      path: '/cleaning-logs',
-      name: 'CleaningLogs',
-      component: () => import('../views/CleaningLogs.vue'),
-      meta: { requiresAuth: true } // 🔒 Protected
-    },
-    {
-    path: '/settings',
-    name: 'Settings',
-    component: MerchantSettings,
-    meta: { requiresAuth: true }
-    },
-    // === NEW SUPER ADMIN ROUTES ===
-    {
-      path: '/super-admin/merchants',
-      name: 'SuperAdminMerchants',
-      component: MerchantsManager,
-      meta: { requiresAuth: true, requiresSuperAdmin: true } //  New Meta Tag
-    },
-    {
-      path: '/super-admin/config', // New path
-      name: 'SuperAdminConfig',
-      component: ManageClientSettings,
-      meta: { requiresAuth: true, requiresSuperAdmin: true }
-    },
+      component: Layout, // 👈 THIS IS KEY: Loads Layout (Sidebar+Tabs) first
+      meta: { requiresAuth: true },
+      // All these pages will render INSIDE Layout's <router-view>
+      children: [
+        {
+          path: '', // Empty path means this is the default for '/'
+          name: 'dashboard',
+          component: Dashboard,
+          meta: { title: 'Dashboard' } 
+        },
+        {
+          path: 'submissions', // Note: No leading slash
+          name: 'submissions',
+          component: () => import('../views/Submissions.vue'),
+          meta: { title: 'Submissions' } 
+        },
+        {
+          path: 'withdrawals',
+          name: 'withdrawals',
+          component: Withdrawals,
+          meta: { title: 'Withdrawals' } 
+        },
+        {
+          path: 'users',
+          name: 'users',
+          component: Users,
+          meta: { title: 'User Management' } 
+        },
+        {
+          path: 'users/:id',
+          name: 'userDetail',
+          component: UserDetail,
+          meta: { title: 'User Profile' } 
+        },
+        {
+          path: 'machines',
+          name: 'machines',
+          component: MachineStatus,
+          meta: { title: 'Machine Status' } 
+        },
+        { 
+          path: 'admins', 
+          name: 'admins',
+          component: AdminManager,
+          meta: { title: 'Admin Access' } 
+        },
+        {
+          path: 'cleaning-logs',
+          name: 'CleaningLogs',
+          component: () => import('../views/CleaningLogs.vue'),
+          meta: { title: 'Waste Logs' } 
+        },
+        {
+          path: 'settings',
+          name: 'Settings',
+          component: MerchantSettings,
+          meta: { title: 'Settings' } 
+        },
+        // Super Admin Routes
+        {
+          path: 'super-admin/merchants',
+          name: 'SuperAdminMerchants',
+          component: MerchantsManager,
+          meta: { requiresSuperAdmin: true, title: 'Manage Clients' } 
+        },
+        {
+          path: 'super-admin/config',
+          name: 'SuperAdminConfig',
+          component: ManageClientSettings,
+          meta: { requiresSuperAdmin: true, title: 'Platform Config' } 
+        },
+      ]
+    }
   ]
 });
 
@@ -98,8 +116,10 @@ const router = createRouter({
 // ------------------------------------------------------------------
 router.beforeEach(async (to, _from, next) => {
   const { data: { session } } = await supabase.auth.getSession();
+  
+  // Check matched routes (checks parents too)
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
-  const requiresSuperAdmin = to.matched.some(record => record.meta.requiresSuperAdmin); // Check tag
+  const requiresSuperAdmin = to.matched.some(record => record.meta.requiresSuperAdmin);
 
   if (requiresAuth && !session) {
     next({ name: 'login' });
@@ -112,19 +132,17 @@ router.beforeEach(async (to, _from, next) => {
       .from('app_admins')
       .select('role')
       .eq('email', session.user.email!)
-      .single();
+      .maybeSingle();
 
     if (!admin) {
-      // Not in whitelist -> Kick out
       await supabase.auth.signOut();
       next({ name: 'login' });
       return;
     }
 
-    // 🔥 NEW: Super Admin Check
     if (requiresSuperAdmin && admin.role !== 'SUPER_ADMIN') {
       alert("⛔ Access Denied: Super Admin Only");
-      next({ name: 'dashboard' }); // Send back to safety
+      next({ name: 'dashboard' }); 
       return;
     }
   }
