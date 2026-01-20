@@ -15,11 +15,12 @@ export function useSubmissionReviews() {
     const showModal = ref(false);
     const showCleanupModal = ref(false);
     
-    // 🔥 NEW: Fast Confirm Modal State
+    // NEW: Fast Confirm Modal State
     const showConfirmModal = ref(false);
     const confirmMessage = ref('');
     const reviewToConfirm = ref<SubmissionReview | null>(null);
-
+    const showSuccessModal = ref(false);
+    const successMessage = ref('');
     const selectedReview = ref<SubmissionReview | null>(null);
     const modalStartInReject = ref(false);
 
@@ -121,30 +122,61 @@ export function useSubmissionReviews() {
         showConfirmModal.value = true;
     };
 
-    // 🔥 NEW: Actual Execution of Fast Confirm
+    // NEW: Actual Execution of Fast Confirm
     const executeFastConfirm = async () => {
         if (!reviewToConfirm.value) return;
         isProcessing.value = true;
-        await verifySubmission(reviewToConfirm.value.id, reviewToConfirm.value.api_weight, reviewToConfirm.value.rate_per_kg);
+        
+        const success = await verifySubmission(
+            reviewToConfirm.value.id, 
+            reviewToConfirm.value.api_weight, 
+            reviewToConfirm.value.rate_per_kg
+        );
+        
         isProcessing.value = false;
-        showConfirmModal.value = false;
-        reviewToConfirm.value = null;
+
+        if (success) {
+            showConfirmModal.value = false;
+            reviewToConfirm.value = null;
+            successMessage.value = "Submission verified successfully!";
+            showSuccessModal.value = true;
+        } else {
+            showConfirmModal.value = false; 
+        }
     };
 
     const handleCorrectionSubmit = async (finalWeight: number) => {
         if (!selectedReview.value) return;
         isProcessing.value = true;
-        const success = await verifySubmission(selectedReview.value.id, finalWeight, selectedReview.value.rate_per_kg);
-        if (success) showModal.value = false;
+        
+        const success = await verifySubmission(
+            selectedReview.value.id, 
+            finalWeight, 
+            selectedReview.value.rate_per_kg
+        );
+        
         isProcessing.value = false;
+
+        if (success) {
+            showModal.value = false;
+            successMessage.value = "Submission updated and verified successfully!";
+            showSuccessModal.value = true;
+        }
     };
 
     const handleRejectSubmit = async (reason: string) => {
         if (!selectedReview.value) return;
         isProcessing.value = true;
-        await rejectSubmission(selectedReview.value.id, reason);
+        
+        const success = await rejectSubmission(selectedReview.value.id, reason);
+
         isProcessing.value = false;
-        showModal.value = false;
+
+        if (success) {
+            showModal.value = false;
+            successMessage.value = "Submission rejected.";
+            showSuccessModal.value = true;
+        }
     };
 
     const handleCleanupSubmit = async (months: number) => {
@@ -294,6 +326,8 @@ export function useSubmissionReviews() {
     return {
         reviews, loading, isHarvesting, isProcessing,
         showModal, showCleanupModal, selectedReview, modalStartInReject,
+
+        showSuccessModal, successMessage,
         
         // Confirm Modal Exports
         showConfirmModal, confirmMessage, triggerFastConfirm, executeFastConfirm,

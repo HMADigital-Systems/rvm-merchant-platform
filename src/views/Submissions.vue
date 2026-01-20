@@ -33,7 +33,8 @@ const {
   handleCorrectionSubmit,
   handleRejectSubmit,
   handleCleanupSubmit,
-  showConfirmModal, confirmMessage, triggerFastConfirm, executeFastConfirm
+  showConfirmModal, confirmMessage, triggerFastConfirm, executeFastConfirm,
+  showSuccessModal, successMessage
 } = useSubmissionReviews();
 
 // Image Preview State
@@ -281,6 +282,15 @@ onMounted(() => fetchReviews());
       :isProcessing="isProcessing"
       @close="showConfirmModal = false"
       @confirm="executeFastConfirm"
+    />
+
+    <SimpleConfirmModal
+      :isOpen="showSuccessModal"
+      title="Success"
+      :message="successMessage"
+      :isProcessing="false"
+      @close="showSuccessModal = false"
+      @confirm="showSuccessModal = false" 
     />
   </div>
 </template>

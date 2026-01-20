@@ -127,7 +127,8 @@ async function processSingleUser(user: any, machineMap: any, now: Date, forceRes
                 photo_url: record.imgUrl,
                 submitted_at: record.createTime,
                 status: 'PENDING',
-                source: 'FETCH'
+                source: 'FETCH',
+                bin_weight_snapshot: record.positionWeight || 0
             });
             
             userImportCount++;
