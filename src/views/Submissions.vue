@@ -201,14 +201,15 @@ onMounted(() => fetchReviews());
               <td v-if="activeStatusTab === 'VERIFIED'" class="px-6 py-4 text-center"><span class="font-bold text-green-600">{{ item.confirmed_weight }} kg</span></td>
               <td class="px-6 py-4 text-center">
                 <div v-if="item.status === 'VERIFIED'">
-                  <span class="text-lg font-bold text-green-600">{{ item.calculated_points }}</span>
+                  <span class="text-lg font-bold text-green-600">{{ item.calculated_value }}</span>
                   <div class="text-[10px] text-gray-400">Final</div>
                 </div>
+                
                 <div v-else class="flex flex-col items-center">
                   <span class="text-sm font-bold text-gray-700">{{ (item.api_weight * item.rate_per_kg).toFixed(2) }}</span>
                   <div v-if="item.machine_given_points" class="text-[10px] mt-1 flex items-center gap-1">
-                     <span class="text-gray-400">Machine: {{ item.machine_given_points }}</span>
-                     <span v-if="Math.abs(item.machine_given_points - (item.api_weight * item.rate_per_kg)) > 0.02" class="text-amber-500 cursor-help" title="Mismatch!">⚠️</span>
+                      <span class="text-gray-400">Machine: {{ item.machine_given_points }}</span>
+                      <span v-if="Math.abs(item.machine_given_points - (item.api_weight * item.rate_per_kg)) > 0.02" class="text-amber-500 cursor-help" title="Mismatch!">⚠️</span>
                   </div>
                 </div>
               </td>

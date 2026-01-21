@@ -5,11 +5,12 @@ import WithdrawalFilters from '../components/WithdrawalFilters.vue';
 import { WithdrawalStatus } from '../types'; 
 import { 
   CheckCircle2, XCircle, RefreshCcw,  ChevronLeft, ChevronRight,
-  Clock, CheckSquare
+  Clock, CheckSquare, Download
 } from 'lucide-vue-next';
 import { Eye } from 'lucide-vue-next';
 import type { Withdrawal } from '../types';
 import WithdrawalDetailsModal from '../components/WithdrawalDetailsModal.vue';
+import ExportSummaryModal from '../components/ExportSummaryModal.vue';
 
 // 1. Init Logic from Composable
 const { 
@@ -84,6 +85,47 @@ const paginatedList = computed(() => {
 watch([filteredList, activeTab], () => currentPage.value = 1);
 
 // ... (Helpers and Modal logic stay same) ...
+
+// Selection Logic
+const selectedIds = ref(new Set<string>());
+
+const toggleSelection = (id: string) => {
+  const newSet = new Set(selectedIds.value);
+  if (newSet.has(id)) newSet.delete(id);
+  else newSet.add(id);
+  selectedIds.value = newSet;
+};
+
+const toggleSelectAll = () => {
+  const newSet = new Set(selectedIds.value);
+  const pageIds = paginatedList.value.map(w => w.id);
+  const allSelected = pageIds.every(id => newSet.has(id));
+
+  if (allSelected) {
+    pageIds.forEach(id => newSet.delete(id));
+  } else {
+    pageIds.forEach(id => newSet.add(id));
+  }
+  selectedIds.value = newSet;
+};
+
+const isPageSelected = computed(() => {
+  return paginatedList.value.length > 0 && paginatedList.value.every(w => selectedIds.value.has(w.id));
+});
+
+// Smart Data for Export
+const dataToExport = computed(() => {
+  if (selectedIds.value.size > 0) {
+    return withdrawals.value.filter(w => selectedIds.value.has(w.id));
+  }
+  return filteredList.value;
+});
+
+// Clear selection on tab change
+watch([filteredList, activeTab], () => {
+  selectedIds.value.clear();
+});
+
 const getStatusConfig = (status: string) => {
   switch (status) {
     case 'APPROVED': 
@@ -100,6 +142,7 @@ const getStatusConfig = (status: string) => {
 
 const showModal = ref(false);
 const selectedWithdrawal = ref<Withdrawal | null>(null);
+const showExportModal = ref(false);
 
 const openDetails = (w: Withdrawal) => {
   selectedWithdrawal.value = w;
@@ -116,15 +159,27 @@ onMounted(() => fetchWithdrawals());
         <h2 class="text-lg font-bold text-gray-900">Withdrawal Requests</h2>
         <p class="text-sm text-gray-500 mt-1">Manage point redemption requests</p>
       </div>
-      <button 
-        @click="fetchWithdrawals" 
-        :disabled="loading"
-        class="flex items-center space-x-2 text-sm text-gray-600 hover:text-gray-900 bg-white border border-gray-200 px-4 py-2 rounded-lg shadow-sm hover:shadow transition-all disabled:opacity-50"
-      >
-        <RefreshCcw :size="14" :class="{'animate-spin': loading}" />
-        <span>Refresh</span>
-      </button>
-    </div>
+      
+      <div class="flex items-center gap-3">
+        <button 
+          @click="showExportModal = true"
+          :disabled="filteredList.length === 0"
+          class="flex items-center space-x-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 px-4 py-2 rounded-lg hover:bg-green-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download :size="16" />
+          <span>{{ selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : 'Export All' }}</span>
+        </button>
+
+        <button 
+          @click="fetchWithdrawals" 
+          :disabled="loading"
+          class="flex items-center space-x-2 text-sm text-gray-600 hover:text-gray-900 bg-white border border-gray-200 px-4 py-2 rounded-lg shadow-sm hover:shadow transition-all disabled:opacity-50"
+        >
+          <RefreshCcw :size="14" :class="{'animate-spin': loading}" />
+          <span>Refresh</span>
+        </button>
+      </div>
+      </div>
 
     <div class="space-y-4">
         <WithdrawalFilters @update:filters="(val) => searchFilters = val" />
@@ -156,6 +211,14 @@ onMounted(() => fetchWithdrawals());
         <table class="w-full text-left border-collapse">
           <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold tracking-wider whitespace-nowrap">
             <tr>
+              <th class="px-6 py-4 border-b w-10">
+                <input 
+                  type="checkbox" 
+                  :checked="isPageSelected" 
+                  @change="toggleSelectAll"
+                  class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                />
+              </th>
               <th class="px-6 py-4 border-b">Date</th>
               <th class="px-6 py-4 border-b">User</th>
               <th class="px-6 py-4 border-b">Phone</th>
@@ -168,10 +231,24 @@ onMounted(() => fetchWithdrawals());
 
           <tbody class="divide-y divide-gray-100 text-sm">
             <tr v-if="paginatedList.length === 0">
-              <td :colspan="activeTab === 'PENDING' ? 7 : 6" class="p-8 text-center text-gray-400">No requests found in {{ activeTab.toLowerCase() }}.</td>
+              <td :colspan="activeTab === 'PENDING' ? 8 : 7" class="p-8 text-center text-gray-400">No requests found in {{ activeTab.toLowerCase() }}.</td>
             </tr>
 
-            <tr v-for="w in paginatedList" :key="w.id" class="hover:bg-gray-50/80 transition-colors group">
+            <tr 
+              v-for="w in paginatedList" 
+              :key="w.id" 
+              :class="selectedIds.has(w.id) ? 'bg-blue-50/60' : 'hover:bg-gray-50/80'" 
+              class="transition-colors group"
+            >
+              <td class="px-6 py-4">
+                <input 
+                  type="checkbox" 
+                  :checked="selectedIds.has(w.id)" 
+                  @change="toggleSelection(w.id)"
+                  class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
+                />
+              </td>
+
               <td class="px-6 py-4 whitespace-nowrap text-gray-500 text-xs">
                 <div>{{ new Date(w.created_at).toLocaleDateString() }}</div>
                 <div class="mt-0.5">{{ new Date(w.created_at).toLocaleTimeString() }}</div>
@@ -204,13 +281,13 @@ onMounted(() => fetchWithdrawals());
 
               <td v-if="activeTab === 'PENDING'" class="px-6 py-4">
                  <div v-if="balanceResult && balanceResult.id === w.id" class="bg-slate-50 border border-slate-200 rounded p-2 text-xs w-40 shadow-sm animate-in fade-in">
-                    <div class="flex justify-between font-bold mb-1 border-b border-slate-200 pb-1">
-                      <span class="text-slate-600">Current:</span>
-                      <span :class="balanceResult.available < w.amount ? 'text-red-600' : 'text-green-600'">
-                        {{ balanceResult.available.toFixed(2) }}
-                      </span>
-                    </div>
-                    </div>
+                   <div class="flex justify-between font-bold mb-1 border-b border-slate-200 pb-1">
+                     <span class="text-slate-600">Current:</span>
+                     <span :class="balanceResult.available < w.amount ? 'text-red-600' : 'text-green-600'">
+                       {{ balanceResult.available.toFixed(2) }}
+                     </span>
+                   </div>
+                 </div>
                  <button v-else @click="checkBalance(w)" :disabled="checkingBalanceId === w.id" class="w-full py-1.5 px-3 bg-white border border-blue-200 text-blue-600 rounded text-xs font-medium hover:bg-blue-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
                    <RefreshCcw :size="12" :class="{'animate-spin': checkingBalanceId === w.id}" />
                    {{ checkingBalanceId === w.id ? '...' : 'Verify' }}
@@ -255,6 +332,12 @@ onMounted(() => fetchWithdrawals());
       :isOpen="showModal" 
       :withdrawal="selectedWithdrawal" 
       @close="showModal = false" 
+    />
+
+    <ExportSummaryModal 
+      :isOpen="showExportModal"
+      :data="dataToExport" 
+      @close="showExportModal = false"
     />
   </div>
 </template>
