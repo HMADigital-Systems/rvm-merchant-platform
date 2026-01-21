@@ -7,8 +7,6 @@ const supabase = createClient(
 );
 
 const APP_URL = 'https://rvm-merchant-platform.vercel.app';
-
-// 🔒 ISOLATION: Only these specific machines get the special "Zero-Glitch" treatment
 const UCO_DEVICES = ['071582000007', '071582000009'];
 
 export default async function handler(req: any, res: any) {
@@ -81,18 +79,17 @@ async function processBin(machine: any, position: number, liveWeightStr: string,
     const dbWeight = Number(dbWeightNum || 0);
     const DROP_THRESHOLD = 2.0; 
     
-    // ✅ SAFEGUARD: Only applies if device is in the UCO list
-    const isUCO = UCO_DEVICES.includes(machine.device_no);
-
-    if (isUCO && liveWeight < 0.1 && dbWeight > 5.0) {
+    // ✅ NEW: UCO Glitch Safeguard for Live Poll
+    // If it's a UCO machine and weight drops EXACTLY to 0 (or near 0) from a high number, ignore it.
+    if (UCO_DEVICES.includes(machine.device_no) && liveWeight < 0.1 && dbWeight > 5.0) {
         console.log(`⚠️ Ignored UCO sensor glitch on ${machine.device_no}. DB: ${dbWeight}kg, Live: ${liveWeight}kg`);
-        return false; // Exit early ONLY for UCO machines showing 0kg glitch
+        return false; 
     }
 
     const diff = dbWeight - liveWeight;
     let cleaningDetected = false;
 
-    // 1. Detect Drop (Standard Logic - Runs for ALL machines)
+    // 1. Detect Drop (Cleaning Event)
     if (diff > DROP_THRESHOLD) {
         
         const timeWindow = new Date(Date.now() - 45 * 60 * 1000).toISOString();
@@ -124,7 +121,9 @@ async function processBin(machine: any, position: number, liveWeightStr: string,
     }
 
     // 2. Sync Logic (Gradual Increase)
+    // This handles user recycling activity (e.g. 50kg -> 55kg)
     if (Math.abs(liveWeight - dbWeight) > 0.05) {
+        
         if (liveWeight > dbWeight) {
              console.log(`📈 Weight Increased on ${machine.device_no}: ${dbWeight}kg -> ${liveWeight}kg`);
         }

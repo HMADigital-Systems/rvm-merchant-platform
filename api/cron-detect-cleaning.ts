@@ -7,11 +7,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// UCO Device Identifiers (Add others if needed)
+// UCO Device Identifiers
 const UCO_DEVICES = ['071582000007', '071582000009'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Security Check
   if (req.query.key !== process.env.CRON_SECRET) {
       return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -40,15 +39,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!rawSubmissions || rawSubmissions.length < 2) continue;
 
         // ---------------------------------------------------------
-        // ✅ NEW: SANITY FILTER FOR UCO MACHINES
+        // ✅ NEW: ENHANCED SANITY FILTER FOR UCO
         // ---------------------------------------------------------
         const submissions = rawSubmissions.filter(sub => {
             const isUCO = UCO_DEVICES.includes(machine.device_no) || sub.waste_type?.toUpperCase().includes('UCO');
             
             if (isUCO) {
-                // If user put 0 weight, the machine reports 0 bin level (Glitch).
-                // We ignore these records so we compare Real Level (A) -> Real Level (B).
-                if (Number(sub.api_weight) === 0) return false;
+                const binWeight = Number(sub.bin_weight_snapshot || 0);
+                const userWeight = Number(sub.api_weight || 0);
+
+                // 1. Ignore if user transaction failed (0 input)
+                if (userWeight === 0) return false;
+
+                // 2. Ignore if machine reports EMPTY (0kg) during a transaction
+                // This fixes the "150kg -> 0kg -> 150kg" false flag.
+                // We assume a working UCO machine never reads exactly 0.0 unless freshly installed.
+                if (binWeight < 0.1) return false;
             }
             return true;
         });
@@ -67,13 +73,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // 1. Was it full? (> 0.5kg)
             const wasFull = prevWeight > 0.5;
             
-            // 2. Is it now empty? (< 2.0kg) - Higher threshold for UCO drums tare weight
+            // 2. Is it now empty? (< 2.0kg)
             const nowEmpty = currWeight < 2.0; 
 
             // 3. Did weight drop significantly?
             if (wasFull && nowEmpty && currWeight < prevWeight) {
                 
-                // Check for duplicates in the specific time window
+                // Check for duplicates
                 const { data: existing } = await supabase
                     .from('cleaning_records')
                     .select('id')
