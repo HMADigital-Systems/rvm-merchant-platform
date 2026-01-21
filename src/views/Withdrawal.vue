@@ -336,7 +336,8 @@ onMounted(() => fetchWithdrawals());
 
     <ExportSummaryModal 
       :isOpen="showExportModal"
-      :data="dataToExport" 
+      :data="dataToExport"
+      mode="withdrawals" 
       @close="showExportModal = false"
     />
   </div>

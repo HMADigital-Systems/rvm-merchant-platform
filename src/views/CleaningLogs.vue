@@ -2,13 +2,15 @@
 import { onMounted, ref, computed } from 'vue';
 import { useCleaningRecords } from '../composables/useCleaningRecords';
 import CleaningVerificationModal from '../components/CleaningVerificationModal.vue';
-import { Trash2, Clock, Search, Scale, User, ImageIcon, CheckCircle, XCircle, RefreshCw } from 'lucide-vue-next';
+import { Trash2, Clock, Search, Scale, User, ImageIcon, CheckCircle, XCircle, RefreshCw, Download } from 'lucide-vue-next';
+import ExportSummaryModal from '../components/ExportSummaryModal.vue';
 
 const { records, loading, fetchCleaningLogs, approveCleaning, rejectCleaning, formatDate } = useCleaningRecords();
 const searchTerm = ref('');
 
 // Modal State
 const showModal = ref(false);
+const showExportModal = ref(false);
 const selectedRecord = ref<any>(null);
 const isProcessing = ref(false);
 
@@ -47,6 +49,42 @@ const handleReject = async (reason: string) => {
     showModal.value = false;
 };
 
+// ------------------------------------
+// ✅ 3. ADD SELECTION & EXPORT LOGIC
+// ------------------------------------
+const selectedIds = ref(new Set<string>());
+
+const toggleSelection = (id: string) => {
+  const newSet = new Set(selectedIds.value);
+  if (newSet.has(id)) newSet.delete(id);
+  else newSet.add(id);
+  selectedIds.value = newSet;
+};
+
+const toggleSelectAll = () => {
+  const newSet = new Set(selectedIds.value);
+  const allIds = filteredRecords.value.map(r => r.id);
+  const allSelected = allIds.every(id => newSet.has(id));
+
+  if (allSelected) {
+    allIds.forEach(id => newSet.delete(id));
+  } else {
+    allIds.forEach(id => newSet.add(id));
+  }
+  selectedIds.value = newSet;
+};
+
+const isPageSelected = computed(() => {
+  return filteredRecords.value.length > 0 && filteredRecords.value.every(r => selectedIds.value.has(r.id));
+});
+
+const dataToExport = computed(() => {
+  if (selectedIds.value.size > 0) {
+    return records.value.filter(r => selectedIds.value.has(r.id));
+  }
+  return filteredRecords.value;
+});
+
 onMounted(() => {
   fetchCleaningLogs();
 });
@@ -64,6 +102,15 @@ onMounted(() => {
       </div>
 
       <div class="flex gap-3 w-full md:w-auto">
+        <button 
+        @click="showExportModal = true"
+        :disabled="filteredRecords.length === 0"
+        class="flex items-center px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-all font-medium disabled:opacity-50"
+        >
+            <Download :size="18" class="mr-2" />
+            <span>{{ selectedIds.size > 0 ? `Export (${selectedIds.size})` : 'Export' }}</span>
+        </button>
+
         <button 
             @click="handleRefresh" 
             :disabled="loading" 
@@ -89,6 +136,15 @@ onMounted(() => {
       <table class="w-full text-left">
         <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
           <tr>
+            
+            <th class="px-6 py-4 w-10">
+                <input 
+                    type="checkbox" 
+                    :checked="isPageSelected" 
+                    @change="toggleSelectAll" 
+                    class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer w-4 h-4" 
+                />
+            </th>
             <th class="px-6 py-4">Cleaning Time</th>
             <th class="px-6 py-4">Machine</th>
             <th class="px-6 py-4 text-center">Snapshot</th> <th class="px-6 py-4">Waste Type</th>
@@ -100,14 +156,27 @@ onMounted(() => {
         </thead>
         <tbody class="divide-y divide-gray-100">
           <tr v-if="loading" class="animate-pulse">
-            <td colspan="8" class="p-8 text-center text-gray-400">Loading records...</td>
+            <td colspan="9" class="p-8 text-center text-gray-400">Loading records...</td>
           </tr>
           <tr v-else-if="filteredRecords.length === 0">
-            <td colspan="8" class="p-8 text-center text-gray-400">No cleaning records found.</td>
+            <td colspan="9" class="p-8 text-center text-gray-400">No cleaning records found.</td>
           </tr>
           
-          <tr v-for="item in filteredRecords" :key="item.id" class="hover:bg-gray-50 transition-colors">
+          <tr 
+            v-for="item in filteredRecords" 
+            :key="item.id" 
+            :class="{'bg-emerald-50/50': selectedIds.has(item.id)}" 
+            class="hover:bg-gray-50 transition-colors"
+          >
             
+            <td class="px-6 py-4">
+                <input 
+                    type="checkbox" 
+                    :checked="selectedIds.has(item.id)" 
+                    @change="toggleSelection(item.id)" 
+                    class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer w-4 h-4" 
+                />
+            </td>
             <td class="px-6 py-4">
               <div class="flex items-center text-sm text-gray-700 font-medium">
                 <Clock :size="16" class="mr-2 text-gray-400" />
@@ -188,6 +257,12 @@ onMounted(() => {
         @close="showModal = false"
         @approve="handleApprove"
         @reject="handleReject"
+    />
+    <ExportSummaryModal 
+        :isOpen="showExportModal"
+        :data="dataToExport"
+        mode="cleaning" 
+        @close="showExportModal = false"
     />
   </div>
 </template>

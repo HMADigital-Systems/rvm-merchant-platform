@@ -1,31 +1,36 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { X, PieChart, FileSpreadsheet } from 'lucide-vue-next'; // ✅ Removed unused 'Download'
-import { useExcelExport } from '../composables/useExcelExport';
+import { X, PieChart, FileSpreadsheet } from 'lucide-vue-next';
+import { useExcelExport, type ExportMode } from '../composables/useExcelExport';
 
 const props = defineProps<{
   isOpen: boolean;
   data: any[];
+  mode: ExportMode; // ✅ NEW: Prop to distinguish mode
 }>();
 
 const emit = defineEmits(['close']);
 const { generateSummary, downloadExcel } = useExcelExport();
 
-const stats = computed(() => generateSummary(props.data));
+// Pass mode to summary generator
+const stats = computed(() => generateSummary(props.data, props.mode));
 
 const percentages = computed(() => {
   const total = stats.value.totalCount || 1;
-  // ✅ FIX: Access via string index and provide default 0 to fix 'possibly undefined' error
   const counts = stats.value.statusCounts;
+  
+  // Combine "Success" statuses (Paid, Approved, Verified)
+  const successCount = (counts['APPROVED'] || 0) + (counts['VERIFIED'] || 0) + (counts['PAID'] || 0);
+  
   return {
     pending: ((counts['PENDING'] || 0) / total) * 100,
-    approved: ((counts['APPROVED'] || 0) / total) * 100,
+    success: (successCount / total) * 100,
     rejected: ((counts['REJECTED'] || 0) / total) * 100
   };
 });
 
 const handleDownload = () => {
-  downloadExcel(props.data, 'Withdrawals');
+  downloadExcel(props.data, props.mode);
   emit('close');
 };
 </script>
@@ -38,7 +43,7 @@ const handleDownload = () => {
       
       <div class="bg-slate-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
         <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
-          <PieChart :size="20" class="text-blue-600"/> Export Summary
+          <PieChart :size="20" class="text-blue-600"/> Export {{ mode === 'withdrawals' ? 'Withdrawals' : 'Logs' }}
         </h3>
         <button @click="emit('close')" class="p-1 hover:bg-gray-200 rounded-full transition-colors">
           <X :size="20" class="text-gray-500" />
@@ -53,8 +58,10 @@ const handleDownload = () => {
             <div class="text-3xl font-bold text-gray-900">{{ stats.totalCount }}</div>
           </div>
           <div class="bg-green-50 p-4 rounded-xl border border-green-100 text-center">
-            <div class="text-sm text-green-600 font-semibold uppercase tracking-wider">Total Value</div>
-            <div class="text-3xl font-bold text-gray-900">{{ stats.totalAmount.toLocaleString() }}</div>
+            <div class="text-sm text-green-600 font-semibold uppercase tracking-wider">
+                {{ mode === 'withdrawals' ? 'Total Value' : 'Total Kg' }}
+            </div>
+            <div class="text-3xl font-bold text-gray-900">{{ stats.totalValue.toLocaleString() }}</div>
           </div>
         </div>
 
@@ -63,19 +70,26 @@ const handleDownload = () => {
           
           <div class="h-4 w-full bg-gray-100 rounded-full flex overflow-hidden">
             <div class="bg-amber-400 h-full" :style="{ width: percentages.pending + '%' }" title="Pending"></div>
-            <div class="bg-green-500 h-full" :style="{ width: percentages.approved + '%' }" title="Approved"></div>
+            <div class="bg-green-500 h-full" :style="{ width: percentages.success + '%' }" title="Success"></div>
             <div class="bg-red-500 h-full" :style="{ width: percentages.rejected + '%' }" title="Rejected"></div>
           </div>
 
           <div class="flex justify-between text-xs mt-2 text-gray-600">
-            <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-amber-400"></div> Pending ({{ stats.statusCounts['PENDING'] || 0 }})</div>
-            <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-green-500"></div> Paid ({{ stats.statusCounts['APPROVED'] || 0 }})</div>
-            <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-red-500"></div> Rejected ({{ stats.statusCounts['REJECTED'] || 0 }})</div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 rounded-full bg-amber-400"></div> Pending ({{ stats.statusCounts['PENDING'] || 0 }})
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 rounded-full bg-green-500"></div> 
+                {{ mode === 'withdrawals' ? 'Paid' : 'Verified' }} ({{ (stats.statusCounts['APPROVED'] || 0) + (stats.statusCounts['VERIFIED'] || 0) + (stats.statusCounts['PAID'] || 0) }})
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 rounded-full bg-red-500"></div> Rejected ({{ stats.statusCounts['REJECTED'] || 0 }})
+            </div>
           </div>
         </div>
 
         <p class="text-xs text-gray-400 text-center italic">
-          This export will include {{ stats.totalCount }} rows based on your current filters.
+          This export will include {{ stats.totalCount }} rows based on your current selection/filters.
         </p>
       </div>
 
