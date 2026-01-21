@@ -8,16 +8,16 @@ const supabase = createClient(
 
 const APP_URL = 'https://rvm-merchant-platform.vercel.app';
 
-// ✅ Fix 1: Added ': any' to req and res to stop TypeScript complaints
+// 🔒 ISOLATION: Only these specific machines get the special "Zero-Glitch" treatment
+const UCO_DEVICES = ['071582000007', '071582000009'];
+
 export default async function handler(req: any, res: any) {
   
-  // Security Check
   if (req.query.key !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    // Fetch Active Machines
     const { data: machines, error } = await supabase
       .from('machines')
       .select('*')
@@ -28,7 +28,6 @@ export default async function handler(req: any, res: any) {
     let updatesCount = 0;
     let cleaningEvents = 0;
 
-    // Loop through machines
     for (const machine of machines) {
       try {
         const proxyRes = await fetch(`${APP_URL}/api/proxy`, {
@@ -47,7 +46,6 @@ export default async function handler(req: any, res: any) {
         // --- BIN 1 PROCESSING ---
         const bin1 = Array.isArray(bins) ? bins.find((b: any) => b.positionNo === 1) : null;
         if (bin1) {
-          // ✅ Fix 2: We now wait for the result (true/false) instead of trying to modify the variable inside the helper
           const wasCleaned = await processBin(machine, 1, bin1.weight, machine.current_bag_weight);
           if (wasCleaned) cleaningEvents++;
         }
@@ -77,20 +75,26 @@ export default async function handler(req: any, res: any) {
   }
 }
 
-// --- HELPER FUNCTION (Now Clean & Isolated) ---
-// Returns TRUE if a cleaning event was recorded, FALSE otherwise
+// --- HELPER FUNCTION ---
 async function processBin(machine: any, position: number, liveWeightStr: string, dbWeightNum: number): Promise<boolean> {
     const liveWeight = Number(liveWeightStr || 0);
     const dbWeight = Number(dbWeightNum || 0);
     const DROP_THRESHOLD = 2.0; 
     
+    // ✅ SAFEGUARD: Only applies if device is in the UCO list
+    const isUCO = UCO_DEVICES.includes(machine.device_no);
+
+    if (isUCO && liveWeight < 0.1 && dbWeight > 5.0) {
+        console.log(`⚠️ Ignored UCO sensor glitch on ${machine.device_no}. DB: ${dbWeight}kg, Live: ${liveWeight}kg`);
+        return false; // Exit early ONLY for UCO machines showing 0kg glitch
+    }
+
     const diff = dbWeight - liveWeight;
     let cleaningDetected = false;
 
-    // 1. Detect Drop (Cleaning Event)
+    // 1. Detect Drop (Standard Logic - Runs for ALL machines)
     if (diff > DROP_THRESHOLD) {
         
-        // Cooldown Check: Prevent duplicates from the last 45 mins
         const timeWindow = new Date(Date.now() - 45 * 60 * 1000).toISOString();
         const wasteType = position === 1 ? machine.config_bin_1 : machine.config_bin_2;
 
@@ -103,7 +107,7 @@ async function processBin(machine: any, position: number, liveWeightStr: string,
             .limit(1);
 
         if (!recentLogs || recentLogs.length === 0) {
-            console.log(`🧹 Cleaning Detected: ${machine.device_no}`);
+            console.log(`🧹 Cleaning Detected: ${machine.device_no}. ${dbWeight}kg -> ${liveWeight}kg`);
             
             await supabase.from('cleaning_records').insert({
                 device_no: machine.device_no,
@@ -115,14 +119,16 @@ async function processBin(machine: any, position: number, liveWeightStr: string,
                 status: 'PENDING'
             });
             
-            cleaningDetected = true; // ✅ Signal to main loop to increment counter
-        } else {
-            console.log(`⚠️ Duplicate Prevented for ${machine.device_no}`);
+            cleaningDetected = true; 
         }
     }
 
-    // 2. FORCE SYNC DB
+    // 2. Sync Logic (Gradual Increase)
     if (Math.abs(liveWeight - dbWeight) > 0.05) {
+        if (liveWeight > dbWeight) {
+             console.log(`📈 Weight Increased on ${machine.device_no}: ${dbWeight}kg -> ${liveWeight}kg`);
+        }
+
         const updateField = position === 1 ? 'current_bag_weight' : 'current_weight_2';
         await supabase
           .from('machines')
