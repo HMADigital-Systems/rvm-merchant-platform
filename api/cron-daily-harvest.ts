@@ -3,21 +3,20 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import crypto from 'crypto';
 
-// 1. Initialize Supabase (Server-Side with Admin Privileges)
+// 1. Initialize Supabase
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-// ✅ FIX: Explicitly require Service Role Key to bypass RLS on 'users' table
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; 
 
 if (!supabaseUrl || !supabaseKey) {
     console.error("❌ Missing Env Vars for Supabase");
-    // We don't throw here to avoid crashing the whole function before response
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Configuration
-const BATCH_SIZE = 5; 
+const USERS_PER_RUN = 10; // ✅ Reduced from 50 to prevent timeout
 const FETCH_LIMIT = 20; 
+const UCO_DEVICES = ['071582000007', '071582000009']; // ✅ For Safeguard
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 🔒 Security Check
@@ -33,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .from('users')
         .select('id, phone, last_synced_at')
         .order('last_synced_at', { ascending: true, nullsFirst: true })
-        .limit(50);
+        .limit(USERS_PER_RUN); // ✅ Use the smaller limit
 
     if (userError) throw new Error(`User Fetch Error: ${userError.message}`);
 
@@ -41,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ message: "No users to sync" });
     }
 
-    console.log(`🔎 Found ${users.length} users to check.`);
+    console.log(`🔎 Processing batch of ${users.length} users...`);
 
     // 2. Load Machine Map
     const { data: machines } = await supabase
@@ -56,29 +55,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let totalImported = 0;
     const now = new Date();
 
-    // 3. Process Users
-    for (const user of users) {
+    // 3. Process Users in PARALLEL (Promise.all)
+    // ✅ This runs all 10 users at the same time, instead of waiting 1-by-1
+    const results = await Promise.allSettled(users.map(async (user) => {
+        
         // Cooldown Check (10 mins)
         if (user.last_synced_at) {
             const diff = (now.getTime() - new Date(user.last_synced_at).getTime()) / 60000;
-            if (diff < 10) {
-                console.log(`⏭️ Skipping ${user.phone} (Synced ${Math.floor(diff)}m ago)`);
-                continue;
-            }
+            if (diff < 10) return 0; // Skip silent
         }
 
         // Fetch External API
         const apiRecords = await fetchExternalRecords(user.phone);
         
+        let count = 0;
         if (apiRecords && apiRecords.length > 0) {
-            const count = await processUserRecords(user, apiRecords, machineMap);
-            totalImported += count;
-            if (count > 0) console.log(`✅ Imported ${count} records for ${user.phone}`);
+            // ✅ Sort Oldest -> Newest to ensure Cleaning Logic has history
+            apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
+            
+            count = await processUserRecords(user, apiRecords, machineMap);
         }
 
         // Update Sync Time
         await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
-    }
+        
+        return count;
+    }));
+
+    // Tally results
+    results.forEach(r => {
+        if (r.status === 'fulfilled') totalImported += r.value;
+        else console.error("❌ User Sync Failed:", r.reason);
+    });
 
     console.log(`✅ [CRON] Complete. Total Imported: ${totalImported}`);
     return res.status(200).json({ success: true, imported: totalImported });
@@ -114,12 +122,10 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
 
         // B. HANDLE EXISTING
         if (existing) {
-            // Auto-verify if machine gave points but we haven't verified yet
             if (existing.status === 'PENDING' && machinePoints > 0) {
                 await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
                     confirmed_weight: record.weight,
-                    calculated_value: 0, // Recalculate logic below if needed, or keep 0 if integral is master
                     machine_given_points: machinePoints,
                     reviewed_at: new Date().toISOString()
                 }).eq('id', existing.id);
@@ -129,11 +135,7 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
 
         // C. INSERT NEW RECORD
         const machine = machineMap[record.deviceNo];
-        if (!machine) {
-            // Optional: Log unknown machine
-            // console.warn(`Unknown Machine: ${record.deviceNo}`);
-            continue;
-        }
+        if (!machine) continue;
 
         const weight = Number(record.weight || 0);
         let wasteType = detectWasteType(record);
@@ -174,12 +176,16 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
 }
 
 // --------------------------------------------------------
-// CLEANING CHECKER (Reused Logic)
+// CLEANING CHECKER (With Safeguards)
 // --------------------------------------------------------
 async function checkCleaningEvent(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
         
+        // ✅ UCO Safeguard: Ignore if machine reports 0kg glitch
+        const isUCO = UCO_DEVICES.includes(apiRecord.deviceNo);
+        if (isUCO && currentWeight < 0.1) return;
+
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
             .select('bin_weight_snapshot, waste_type, photo_url')
@@ -193,23 +199,30 @@ async function checkCleaningEvent(apiRecord: any) {
 
         const previousWeight = Number(lastRecord.bin_weight_snapshot || 0);
 
-        if (previousWeight > 0.5 && currentWeight < 1.0 && currentWeight < previousWeight) {
+        // Logic: 
+        // 1. Previous was Full (> 0.5kg)
+        // 2. Current is Empty (< 2.0kg) - Increased threshold slightly for UCO tare
+        // 3. Weight Dropped
+        if (previousWeight > 0.5 && currentWeight < 2.0 && currentWeight < previousWeight) {
             
             const { data: existingClean } = await supabase
                 .from('cleaning_records')
                 .select('id')
                 .eq('device_no', apiRecord.deviceNo)
-                .eq('cleaned_at', apiRecord.createTime)
-                .maybeSingle();
+                .gte('cleaned_at', lastRecord.submitted_at || new Date(0).toISOString()) // Ensure window is correct
+                .lte('cleaned_at', apiRecord.createTime)
+                .limit(1); // Use limit instead of maybeSingle for speed
 
-            if (!existingClean) {
+            if (!existingClean || existingClean.length === 0) {
+                console.log(`🧹 [CRON] Cleaning Detected: ${apiRecord.deviceNo}`);
                 await supabase.from('cleaning_records').insert({
                     device_no: apiRecord.deviceNo,
                     cleaned_at: apiRecord.createTime, 
                     waste_type: lastRecord.waste_type || 'Unknown',
                     bag_weight_collected: previousWeight,
                     photo_url: lastRecord.photo_url, 
-                    status: 'PENDING'
+                    status: 'PENDING',
+                    cleaner_name: 'System Detected (History)'
                 });
             }
         }
@@ -255,7 +268,8 @@ async function fetchExternalRecords(phone: string) {
                 'timestamp': timestamp,
                 'sign': sign,
                 'Content-Type': 'application/json'
-            }
+            },
+            timeout: 5000 // ✅ 5s Timeout for external API
         });
 
         if (res.data.code === 200 && res.data.data) {
