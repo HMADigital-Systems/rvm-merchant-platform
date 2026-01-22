@@ -14,9 +14,9 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Configuration
-const USERS_PER_RUN = 10; // ✅ Reduced from 50 to prevent timeout
+const USERS_PER_RUN = 10;
 const FETCH_LIMIT = 20; 
-const UCO_DEVICES = ['071582000007', '071582000009']; // ✅ For Safeguard
+const UCO_DEVICES = ['071582000007', '071582000009'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 🔒 Security Check
@@ -27,20 +27,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     console.log("🚜 [CRON] Starting Daily Harvest...");
 
-    // 1. Get Users (Sorted by oldest sync first)
+    // 1. Get Users
     const { data: users, error: userError } = await supabase
         .from('users')
         .select('id, phone, last_synced_at')
         .order('last_synced_at', { ascending: true, nullsFirst: true })
-        .limit(USERS_PER_RUN); // ✅ Use the smaller limit
+        .limit(USERS_PER_RUN);
 
     if (userError) throw new Error(`User Fetch Error: ${userError.message}`);
 
     if (!users || users.length === 0) {
         return res.status(200).json({ message: "No users to sync" });
     }
-
-    console.log(`🔎 Processing batch of ${users.length} users...`);
 
     // 2. Load Machine Map
     const { data: machines } = await supabase
@@ -55,34 +53,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let totalImported = 0;
     const now = new Date();
 
-    // 3. Process Users in PARALLEL (Promise.all)
-    // ✅ This runs all 10 users at the same time, instead of waiting 1-by-1
+    // 3. Process Users (Parallel)
     const results = await Promise.allSettled(users.map(async (user) => {
         
-        // Cooldown Check (10 mins)
         if (user.last_synced_at) {
             const diff = (now.getTime() - new Date(user.last_synced_at).getTime()) / 60000;
-            if (diff < 10) return 0; // Skip silent
+            if (diff < 10) return 0; 
         }
 
-        // Fetch External API
         const apiRecords = await fetchExternalRecords(user.phone);
         
         let count = 0;
         if (apiRecords && apiRecords.length > 0) {
-            // ✅ Sort Oldest -> Newest to ensure Cleaning Logic has history
+            // Sort Oldest -> Newest for correct cleaning detection logic
             apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
-            
             count = await processUserRecords(user, apiRecords, machineMap);
         }
 
-        // Update Sync Time
         await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
         
         return count;
     }));
 
-    // Tally results
     results.forEach(r => {
         if (r.status === 'fulfilled') totalImported += r.value;
         else console.error("❌ User Sync Failed:", r.reason);
@@ -98,8 +90,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // --------------------------------------------------------
-// RECORD PROCESSOR
+// API HELPERS
 // --------------------------------------------------------
+
+async function fetchExternalRecords(phone: string) {
+    const HOST = "https://api.autogcm.com"; 
+    
+    // ✅ SECURITY: No VITE_ prefix for server-side secrets
+    const MERCHANT_NO = process.env.VITE_MERCHANT_NO;
+    const SECRET = process.env.API_SECRET; 
+
+    if (!MERCHANT_NO || !SECRET) {
+        console.error("❌ Missing API Credentials in Env Vars");
+        return [];
+    }
+
+    try {
+        const timestamp = Date.now().toString();
+        const rawSign = MERCHANT_NO + SECRET + timestamp;
+        const sign = crypto.createHash('md5').update(rawSign).digest('hex');
+
+        const res = await axios.get(`${HOST}/api/open/v1/put`, {
+            params: {
+                phone: phone,
+                pageNum: 1, 
+                pageSize: FETCH_LIMIT 
+            },
+            headers: {
+                'Merchant-no': MERCHANT_NO,
+                'timestamp': timestamp,
+                'sign': sign,
+                'Content-Type': 'application/json'
+            },
+            timeout: 5000 
+        });
+
+        if (res.data.code === 200 && res.data.data) {
+            return res.data.data.list || [];
+        }
+        return [];
+    } catch (e: any) {
+        console.error(`API Fetch failed for ${phone}: ${e.message}`);
+        return [];
+    }
+}
+
 async function processUserRecords(user: any, apiRecords: any[], machineMap: Record<string, any>) {
     let importedCount = 0;
 
@@ -115,7 +150,7 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         const existing = existingMap.get(record.id);
         const machinePoints = Number(record.integral || 0);
 
-        // A. CHECK FOR CLEANING
+        // A. CHECK FOR CLEANING (Calls the updated function)
         if (Number(record.weight) > 0) {
             await checkCleaningEvent(record);
         }
@@ -175,14 +210,18 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
     return importedCount;
 }
 
-// --------------------------------------------------------
-// CLEANING CHECKER (With Safeguards)
-// --------------------------------------------------------
+// ✅ UPDATED SAFEGUARD
 async function checkCleaningEvent(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
+        const userWeight = Number(apiRecord.weight || 0); // Amount user recycled
         
-        // ✅ UCO Safeguard: Ignore if machine reports 0kg glitch
+        // ✅ 1. GLOBAL SAFEGUARD (Fixes Yati's case):
+        // If user recycled (>0kg) but machine sensor says empty (0kg), 
+        // it is a sensor glitch during transaction. Do NOT treat as cleaning.
+        if (userWeight > 0 && currentWeight < 0.1) return;
+
+        // ✅ 2. UCO SAFEGUARD (Existing)
         const isUCO = UCO_DEVICES.includes(apiRecord.deviceNo);
         if (isUCO && currentWeight < 0.1) return;
 
@@ -199,19 +238,15 @@ async function checkCleaningEvent(apiRecord: any) {
 
         const previousWeight = Number(lastRecord.bin_weight_snapshot || 0);
 
-        // Logic: 
-        // 1. Previous was Full (> 0.5kg)
-        // 2. Current is Empty (< 2.0kg) - Increased threshold slightly for UCO tare
-        // 3. Weight Dropped
         if (previousWeight > 0.5 && currentWeight < 2.0 && currentWeight < previousWeight) {
             
             const { data: existingClean } = await supabase
                 .from('cleaning_records')
                 .select('id')
                 .eq('device_no', apiRecord.deviceNo)
-                .gte('cleaned_at', lastRecord.submitted_at || new Date(0).toISOString()) // Ensure window is correct
+                .gte('cleaned_at', lastRecord.submitted_at || new Date(0).toISOString()) 
                 .lte('cleaned_at', apiRecord.createTime)
-                .limit(1); // Use limit instead of maybeSingle for speed
+                .limit(1); 
 
             if (!existingClean || existingClean.length === 0) {
                 console.log(`🧹 [CRON] Cleaning Detected: ${apiRecord.deviceNo}`);
@@ -231,9 +266,6 @@ async function checkCleaningEvent(apiRecord: any) {
     }
 }
 
-// --------------------------------------------------------
-// API HELPERS
-// --------------------------------------------------------
 function detectWasteType(record: any): string {
     const rawName = record.rubbishLogDetailsVOList?.[0]?.rubbishName || '';
     const typeKey = rawName.toLowerCase();
@@ -243,41 +275,4 @@ function detectWasteType(record: any): string {
     if (typeKey.includes('glass') || typeKey.includes('玻')) return 'Glass';
     if (typeKey.includes('oil') || typeKey.includes('油')) return 'UCO';
     return 'Plastic';
-}
-
-async function fetchExternalRecords(phone: string) {
-    const HOST = "https://api.autogcm.com"; 
-    const MERCHANT_NO = process.env.VITE_MERCHANT_NO; 
-    const SECRET = process.env.VITE_API_SECRET;
-
-    if (!MERCHANT_NO || !SECRET) return [];
-
-    try {
-        const timestamp = Date.now().toString();
-        const rawSign = MERCHANT_NO + SECRET + timestamp;
-        const sign = crypto.createHash('md5').update(rawSign).digest('hex');
-
-        const res = await axios.get(`${HOST}/api/open/v1/put`, {
-            params: {
-                phone: phone,
-                pageNum: 1, 
-                pageSize: FETCH_LIMIT 
-            },
-            headers: {
-                'Merchant-no': MERCHANT_NO,
-                'timestamp': timestamp,
-                'sign': sign,
-                'Content-Type': 'application/json'
-            },
-            timeout: 5000 // ✅ 5s Timeout for external API
-        });
-
-        if (res.data.code === 200 && res.data.data) {
-            return res.data.data.list || [];
-        }
-        return [];
-    } catch (e: any) {
-        console.error(`API Fetch failed for ${phone}: ${e.message}`);
-        return [];
-    }
 }

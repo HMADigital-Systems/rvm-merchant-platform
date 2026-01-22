@@ -39,21 +39,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!rawSubmissions || rawSubmissions.length < 2) continue;
 
         // ---------------------------------------------------------
-        // ✅ NEW: ENHANCED SANITY FILTER FOR UCO
+        // ✅ NEW: ROBUST SANITY FILTER (ALL MACHINES)
         // ---------------------------------------------------------
         const submissions = rawSubmissions.filter(sub => {
+            const binWeight = Number(sub.bin_weight_snapshot || 0);
+            const userWeight = Number(sub.api_weight || 0);
             const isUCO = UCO_DEVICES.includes(machine.device_no) || sub.waste_type?.toUpperCase().includes('UCO');
-            
+
+            // 1. GLOBAL RULE: Impossible Physics
+            // If user added weight (>0) but machine says empty (<0.1), 
+            // it's a sensor failure. Ignore this snapshot.
+            if (userWeight > 0 && binWeight < 0.1) return false;
+
+            // 2. UCO SPECIFIC RULES
             if (isUCO) {
-                const binWeight = Number(sub.bin_weight_snapshot || 0);
-                const userWeight = Number(sub.api_weight || 0);
-
-                // 1. Ignore if user transaction failed (0 input)
+                // Ignore if user transaction failed (0 input) -> Machine reports 0 bin
                 if (userWeight === 0) return false;
-
-                // 2. Ignore if machine reports EMPTY (0kg) during a transaction
-                // This fixes the "150kg -> 0kg -> 150kg" false flag.
-                // We assume a working UCO machine never reads exactly 0.0 unless freshly installed.
+                // Ignore if UCO machine reports near zero (tare weight issues)
                 if (binWeight < 0.1) return false;
             }
             return true;
