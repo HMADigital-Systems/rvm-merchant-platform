@@ -227,7 +227,8 @@ async function checkCleaningEvent(apiRecord: any) {
 
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
-            .select('bin_weight_snapshot, waste_type, photo_url')
+            // ✅ FIX: Add 'submitted_at' to the select list
+            .select('bin_weight_snapshot, waste_type, photo_url, submitted_at')
             .eq('device_no', apiRecord.deviceNo)
             .lt('submitted_at', apiRecord.createTime) 
             .order('submitted_at', { ascending: false })
@@ -244,9 +245,10 @@ async function checkCleaningEvent(apiRecord: any) {
                 .from('cleaning_records')
                 .select('id')
                 .eq('device_no', apiRecord.deviceNo)
+                // Now this line will work because submitted_at is selected
                 .gte('cleaned_at', lastRecord.submitted_at || new Date(0).toISOString()) 
                 .lte('cleaned_at', apiRecord.createTime)
-                .limit(1); 
+                .limit(1);
 
             if (!existingClean || existingClean.length === 0) {
                 console.log(`🧹 [CRON] Cleaning Detected: ${apiRecord.deviceNo}`);
