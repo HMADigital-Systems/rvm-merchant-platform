@@ -49,6 +49,19 @@ const formatNumber = (num: number) => num.toLocaleString(undefined, { maximumFra
 
 <template>
   <div class="space-y-8 p-6">
+
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-2xl font-bold text-gray-800">Overview</h1>
+      
+      <router-link 
+        to="/big-data" 
+        target="_blank" 
+        class="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-lg hover:shadow-xl"
+      >
+        <Activity :size="16" />
+        Open Big Data Platform
+      </router-link>
+    </div>
     
     <div v-if="statsLoading && machines.length === 0" class="flex h-64 items-center justify-center">
       <div class="text-gray-400 animate-pulse font-medium">Loading Dashboard...</div>

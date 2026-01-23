@@ -1,31 +1,41 @@
 import axios from "axios";
 import type { Machine } from "../types";
 
-// 1. Define Proxy URL
-// If Localhost: Use Live Vercel Backend to avoid CORS issues
-// If Production: Use relative path '/api/proxy'
-const LIVE_BACKEND = 'https://rvm-admin-xi.vercel.app'; 
-const PROXY_URL = import.meta.env.DEV ? `${LIVE_BACKEND}/api/proxy` : '/api/proxy';
+// 1. Define Proxy URLs (Priority List)
+// In DEV: Try Localhost first, then fallback to Live.
+// In PROD: Use relative path (handles domain automatically).
+const PROXY_URLS = import.meta.env.DEV 
+  ? ['http://localhost:3000/api/proxy', 'https://rvm-merchant-platform.vercel.app/api/proxy'] 
+  : ['/api/proxy'];
 
-// ✅ FIXED: Changed return type from Promise<any> to Promise<T>
+// FIXED: Support Failover Loop
 async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data: any = {}): Promise<T> {
-  try {
-    const payload = {
-      endpoint,
-      method,
-      [method === 'GET' ? 'params' : 'body']: data
-    };
-    
-    const res = await axios.post(PROXY_URL, payload);
-    return res.data as T; // Explicitly cast the result to T
-  } catch (error: any) {
-    console.error(`❌ API Error [${endpoint}]:`, error.message);
-    throw error;
+  const payload = {
+    endpoint,
+    method,
+    [method === 'GET' ? 'params' : 'body']: data
+  };
+
+  // Loop through available backends
+  for (const url of PROXY_URLS) {
+    try {
+      const res = await axios.post(url, payload);
+      return res.data as T; 
+    } catch (error: any) {
+      // If this is the LAST url in the list, throw the error (all failed)
+      if (url === PROXY_URLS[PROXY_URLS.length - 1]) {
+        console.error(`❌ API Error [${endpoint}] on all backends:`, error.message);
+        throw error;
+      }
+      // Otherwise, warn and try the next one
+      console.warn(`⚠️ Failed to fetch from ${url}, switching to next backend...`);
+    }
   }
+  throw new Error("Network Error");
 }
 
-// ✅ 3. Get Nearby RVMs
-// Used to find machines near a coordinate (GPS-based)
+// 3. Get Nearby RVMs
+// ... (The rest of your file remains exactly the same) ...
 export async function getNearbyRVMs(latitude: number = 3.14, longitude: number = 101.68): Promise<Machine[]> {
   try {
     const res = await callApi<any>('/api/open/video/v2/nearby', 'GET', { latitude, longitude });

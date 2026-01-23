@@ -29,24 +29,29 @@ const router = createRouter({
       component: Login,
       meta: { hideSidebar: true, requiresAuth: false, title: 'Login' } 
     },
+    {
+      path: '/big-data',
+      name: 'BigData',
+      component: () => import('../views/BigDataPlatform.vue'),
+      meta: { requiresAuth: true } // Still protected, but no Layout
+    },
 
     // --------------------------------------------------------
-    // 2. PROTECTED ROUTES (Wrapped in Layout)
+    // 3. PROTECTED ROUTES (Wrapped in Layout)
     // --------------------------------------------------------
     {
       path: '/',
-      component: Layout, // 👈 THIS IS KEY: Loads Layout (Sidebar+Tabs) first
+      component: Layout, // Loads Sidebar + Tabs
       meta: { requiresAuth: true },
-      // All these pages will render INSIDE Layout's <router-view>
       children: [
         {
-          path: '', // Empty path means this is the default for '/'
+          path: '', 
           name: 'dashboard',
           component: Dashboard,
           meta: { title: 'Dashboard' } 
         },
         {
-          path: 'submissions', // Note: No leading slash
+          path: 'submissions', 
           name: 'submissions',
           component: () => import('../views/Submissions.vue'),
           meta: { title: 'Submissions' } 
