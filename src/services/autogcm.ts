@@ -4,7 +4,7 @@ import type { Machine } from "../types";
 // 1. Define Proxy URL
 // If Localhost: Use Live Vercel Backend to avoid CORS issues
 // If Production: Use relative path '/api/proxy'
-const LIVE_BACKEND = 'https://rvm-admin-xi.vercel.app'; 
+const LIVE_BACKEND = 'https://rvm-merchant-platform.app'; 
 const PROXY_URL = import.meta.env.DEV ? `${LIVE_BACKEND}/api/proxy` : '/api/proxy';
 
 // ✅ FIXED: Changed return type from Promise<any> to Promise<T>

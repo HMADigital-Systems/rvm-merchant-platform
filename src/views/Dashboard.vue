@@ -5,11 +5,13 @@ import { useDashboardStats } from '../composables/useDashboardStats';
 import { storeToRefs } from 'pinia';
 import { 
   AlertCircle, Server, Coins, Scale, Activity, 
-  Recycle, Brush, CheckCircle2
+  Recycle, Brush, CheckCircle2, BarChart3
 } from 'lucide-vue-next';
 import StatsCard from '../components/StatsCard.vue';
+import { useRouter } from 'vue-router';
 
 // Init
+const router = useRouter();
 const machineStore = useMachineStore();
 const { machines, loading: machineLoading } = storeToRefs(machineStore);
 
@@ -39,6 +41,11 @@ const getStatusColor = (status: string) => {
   return map[status] || 'bg-gray-100 text-gray-700';
 };
 
+const openBigData = () => {
+  const routeData = router.resolve({ name: 'BigDataPlatform' });
+  window.open(routeData.href, '_blank');
+};
+
 onMounted(() => {
   machineStore.fetchMachines();
   fetchStats();
@@ -49,6 +56,20 @@ const formatNumber = (num: number) => num.toLocaleString(undefined, { maximumFra
 
 <template>
   <div class="space-y-8 p-6">
+
+  <div class="flex justify-between items-center">
+       <div>
+          <h2 class="text-2xl font-bold text-gray-900">Dashboard</h2>
+          <p class="text-sm text-gray-500">Overview of system performance</p>
+       </div>
+       <button 
+         @click="openBigData"
+         class="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition shadow-sm text-sm font-bold"
+       >
+         <BarChart3 :size="16" />
+         Open Big Data Platform
+       </button>
+    </div>
     
     <div v-if="statsLoading && machines.length === 0" class="flex h-64 items-center justify-center">
       <div class="text-gray-400 animate-pulse font-medium">Loading Dashboard...</div>

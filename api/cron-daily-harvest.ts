@@ -3,20 +3,22 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import crypto from 'crypto';
 
-// 1. Initialize Supabase
+// --------------------------------------------------------
+// CONFIGURATION
+// --------------------------------------------------------
+const BATCH_SIZE = 5;       // Process 5 users in parallel (Safe for API limits)
+const USER_LIMIT_PER_RUN = 50; // Process max 50 users per execution (Safe for Vercel 10s timeout)
+const FETCH_LIMIT = 50;     // Fetch last 50 records per user
+// SET TO 0: If we want "Force Sync" style behavior, we consider anyone not synced "just now" as valid targets.
+// However, to prevent the 12:02 run from re-picking the 12:00 users, we keep a small buffer.
+const SYNC_COOLDOWN_HOURS = 2; 
+
+const UCO_DEVICES = ['071582000007', '071582000009'];
+
+// Initialize Supabase
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; 
-
-if (!supabaseUrl || !supabaseKey) {
-    console.error("❌ Missing Env Vars for Supabase");
-}
-
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Configuration
-const USERS_PER_RUN = 10;
-const FETCH_LIMIT = 20; 
-const UCO_DEVICES = ['071582000007', '071582000009'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 🔒 Security Check
@@ -25,63 +27,79 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    console.log("🚜 [CRON] Starting Daily Harvest...");
+    console.log("🚜 [CRON] Starting Batched Harvest...");
 
-    // 1. Get Users
+    // 1. Define "Stale" Cutoff
+    const cutoffDate = new Date();
+    cutoffDate.setHours(cutoffDate.getHours() - SYNC_COOLDOWN_HOURS);
+
+    // 2. Count Total Pending Users (For Logging/Debugging)
+    // This tells us if our "Burst" is big enough
+    const { count: pendingCount } = await supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`);
+
+    // 3. Fetch Batch of Users (Oldest Synced First)
     const { data: users, error: userError } = await supabase
         .from('users')
         .select('id, phone, last_synced_at')
-        .order('last_synced_at', { ascending: true, nullsFirst: true })
-        .limit(USERS_PER_RUN);
+        .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`)
+        .order('last_synced_at', { ascending: true, nullsFirst: true }) // CRITICAL: Always pick the ones waiting longest
+        .limit(USER_LIMIT_PER_RUN);
 
     if (userError) throw new Error(`User Fetch Error: ${userError.message}`);
 
     if (!users || users.length === 0) {
-        return res.status(200).json({ message: "No users to sync" });
+        console.log("✅ All users are up to date.");
+        return res.status(200).json({ message: "All users up to date.", remaining: 0 });
     }
 
-    // 2. Load Machine Map
+    console.log(`Processing ${users.length} users. (${pendingCount || 0} total pending in queue)`);
+
+    // 4. Load Machine Map
     const { data: machines } = await supabase
         .from('machines')
         .select('device_no, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco, rate_glass');
     
     const machineMap: Record<string, any> = {};
-    machines?.forEach(m => {
-        if (m?.device_no) machineMap[m.device_no] = m;
-    });
+    machines?.forEach(m => { if (m?.device_no) machineMap[m.device_no] = m; });
 
     let totalImported = 0;
     const now = new Date();
 
-    // 3. Process Users (Parallel)
-    const results = await Promise.allSettled(users.map(async (user) => {
+    // 5. Process Batch
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+        const chunk = users.slice(i, i + BATCH_SIZE);
         
-        if (user.last_synced_at) {
-            const diff = (now.getTime() - new Date(user.last_synced_at).getTime()) / 60000;
-            if (diff < 10) return 0; 
-        }
+        const results = await Promise.allSettled(chunk.map(async (user) => {
+            // ✅ OPTIMISTIC LOCK: Update timestamp immediately so the next "Burst" run ignores these users
+            await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
+            
+            const apiRecords = await fetchExternalRecords(user.phone);
+            
+            if (apiRecords && apiRecords.length > 0) {
+                apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
+                return await processUserRecords(user, apiRecords, machineMap);
+            }
+            return 0;
+        }));
 
-        const apiRecords = await fetchExternalRecords(user.phone);
-        
-        let count = 0;
-        if (apiRecords && apiRecords.length > 0) {
-            // Sort Oldest -> Newest for correct cleaning detection logic
-            apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
-            count = await processUserRecords(user, apiRecords, machineMap);
-        }
+        results.forEach(r => {
+            if (r.status === 'fulfilled') totalImported += r.value;
+            else console.error("❌ Batch Error:", r.reason);
+        });
+    }
 
-        await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
-        
-        return count;
-    }));
-
-    results.forEach(r => {
-        if (r.status === 'fulfilled') totalImported += r.value;
-        else console.error("❌ User Sync Failed:", r.reason);
+    const remaining = (pendingCount || 0) - users.length;
+    console.log(`✅ [CRON] Batch Complete. Imported: ${totalImported}. Remaining in Queue: ${remaining}`);
+    
+    return res.status(200).json({ 
+        success: true, 
+        imported: totalImported, 
+        processed: users.length,
+        remaining_in_queue: remaining 
     });
-
-    console.log(`✅ [CRON] Complete. Total Imported: ${totalImported}`);
-    return res.status(200).json({ success: true, imported: totalImported });
 
   } catch (error: any) {
     console.error("❌ [CRON] Critical Error:", error.message);
@@ -89,21 +107,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+// ... (Keep existing fetchExternalRecords, processUserRecords, checkCleaningEvent, detectWasteType helpers exactly as they are) ...
 // --------------------------------------------------------
-// API HELPERS
+// API HELPERS (Paste the same helper functions here from previous response)
 // --------------------------------------------------------
 
 async function fetchExternalRecords(phone: string) {
     const HOST = "https://api.autogcm.com"; 
-    
-    // ✅ SECURITY: No VITE_ prefix for server-side secrets
     const MERCHANT_NO = process.env.VITE_MERCHANT_NO;
     const SECRET = process.env.API_SECRET; 
 
-    if (!MERCHANT_NO || !SECRET) {
-        console.error("❌ Missing API Credentials in Env Vars");
-        return [];
-    }
+    if (!MERCHANT_NO || !SECRET) return [];
 
     try {
         const timestamp = Date.now().toString();
@@ -111,11 +125,7 @@ async function fetchExternalRecords(phone: string) {
         const sign = crypto.createHash('md5').update(rawSign).digest('hex');
 
         const res = await axios.get(`${HOST}/api/open/v1/put`, {
-            params: {
-                phone: phone,
-                pageNum: 1, 
-                pageSize: FETCH_LIMIT 
-            },
+            params: { phone: phone, pageNum: 1, pageSize: FETCH_LIMIT },
             headers: {
                 'Merchant-no': MERCHANT_NO,
                 'timestamp': timestamp,
@@ -137,7 +147,8 @@ async function fetchExternalRecords(phone: string) {
 
 async function processUserRecords(user: any, apiRecords: any[], machineMap: Record<string, any>) {
     let importedCount = 0;
-
+    
+    // Bulk fetch existing IDs
     const remoteIds = apiRecords.map((r: any) => r.id);
     const { data: existingRows } = await supabase
         .from('submission_reviews')
@@ -145,30 +156,31 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         .in('vendor_record_id', remoteIds);
 
     const existingMap = new Map(existingRows?.map(r => [r.vendor_record_id, r]));
+    const recordsToInsert: any[] = [];
 
     for (const record of apiRecords) {
         const existing = existingMap.get(record.id);
-        const machinePoints = Number(record.integral || 0);
-
-        // A. CHECK FOR CLEANING (Calls the updated function)
+        
+        // 1. Cleaning Check
         if (Number(record.weight) > 0) {
-            await checkCleaningEvent(record);
+             await checkCleaningEvent(record);
         }
 
-        // B. HANDLE EXISTING
+        // 2. Handle Existing (Update if pending -> verified)
         if (existing) {
-            if (existing.status === 'PENDING' && machinePoints > 0) {
+             const machinePoints = Number(record.integral || 0);
+             if (existing.status === 'PENDING' && machinePoints > 0) {
                 await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
                     confirmed_weight: record.weight,
                     machine_given_points: machinePoints,
                     reviewed_at: new Date().toISOString()
                 }).eq('id', existing.id);
-            }
-            continue; 
+             }
+             continue; 
         }
 
-        // C. INSERT NEW RECORD
+        // 3. Prepare New Record
         const machine = machineMap[record.deviceNo];
         if (!machine) continue;
 
@@ -184,9 +196,10 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         else rate = Number(machine.rate_plastic || 0);
 
         const calculatedValue = Number((weight * rate).toFixed(2));
+        const machinePoints = Number(record.integral || 0);
         const isVerified = machinePoints > 0;
 
-        await supabase.from('submission_reviews').insert({
+        recordsToInsert.push({
             vendor_record_id: record.id,
             user_id: user.id,
             phone: user.phone,
@@ -207,27 +220,26 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         
         importedCount++;
     }
+
+    if (recordsToInsert.length > 0) {
+        await supabase.from('submission_reviews').insert(recordsToInsert);
+    }
+
     return importedCount;
 }
 
-// ✅ UPDATED SAFEGUARD
 async function checkCleaningEvent(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
-        const userWeight = Number(apiRecord.weight || 0); // Amount user recycled
+        const userWeight = Number(apiRecord.weight || 0); 
         
-        // ✅ 1. GLOBAL SAFEGUARD (Fixes Yati's case):
-        // If user recycled (>0kg) but machine sensor says empty (0kg), 
-        // it is a sensor glitch during transaction. Do NOT treat as cleaning.
         if (userWeight > 0 && currentWeight < 0.1) return;
-
-        // ✅ 2. UCO SAFEGUARD (Existing)
         const isUCO = UCO_DEVICES.includes(apiRecord.deviceNo);
         if (isUCO && currentWeight < 0.1) return;
 
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
-            .select('bin_weight_snapshot, waste_type, photo_url')
+            .select('bin_weight_snapshot, waste_type, photo_url, submitted_at') // Added submitted_at
             .eq('device_no', apiRecord.deviceNo)
             .lt('submitted_at', apiRecord.createTime) 
             .order('submitted_at', { ascending: false })
