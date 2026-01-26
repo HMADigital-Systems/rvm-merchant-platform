@@ -171,7 +171,11 @@ export function useBigDataStats() {
            const day = r.submitted_at.split('T')[0];
            if (!wasteMap.has(day)) wasteMap.set(day, { date: day, delivery_weight: 0, delivery_count: 0, collection_weight: 0, collection_count: 0 });
            const entry = wasteMap.get(day);
-           entry.delivery_weight += Number(r.api_weight) || 0;
+           
+           // FIX: Clamp negative values (calibration data) to 0 so the graph doesn't dip
+           const w = Number(r.api_weight) || 0;
+           entry.delivery_weight += w < 0 ? 0 : w;
+           
            entry.delivery_count += 1;
         });
       }

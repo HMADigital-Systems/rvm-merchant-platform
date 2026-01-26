@@ -6,18 +6,20 @@ import crypto from 'crypto';
 // --------------------------------------------------------
 // CONFIGURATION
 // --------------------------------------------------------
-const BATCH_SIZE = 5;       // Process 5 users in parallel (Safe for API limits)
-const USER_LIMIT_PER_RUN = 50; // Process max 50 users per execution (Safe for Vercel 10s timeout)
-const FETCH_LIMIT = 50;     // Fetch last 50 records per user
-// SET TO 0: If we want "Force Sync" style behavior, we consider anyone not synced "just now" as valid targets.
-// However, to prevent the 12:02 run from re-picking the 12:00 users, we keep a small buffer.
+const BATCH_SIZE = 5; 
+const USER_LIMIT_PER_RUN = 50; 
+const FETCH_LIMIT = 50; 
 const SYNC_COOLDOWN_HOURS = 2; 
-
 const UCO_DEVICES = ['071582000007', '071582000009'];
 
 // Initialize Supabase
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; 
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Service Role bypasses RLS
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error("❌ CRITICAL: Supabase Env Vars missing!");
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -29,23 +31,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     console.log("🚜 [CRON] Starting Batched Harvest...");
 
+    // 1. Debug Environment Variables
+    if (!process.env.VITE_MERCHANT_NO) console.error("❌ ERROR: VITE_MERCHANT_NO is missing in Vercel!");
+    // ✅ Reverted to VITE_API_SECRET to ensure it works with your existing setup
+    if (!process.env.VITE_API_SECRET) console.error("❌ ERROR: VITE_API_SECRET is missing in Vercel!");
+
     // 1. Define "Stale" Cutoff
     const cutoffDate = new Date();
     cutoffDate.setHours(cutoffDate.getHours() - SYNC_COOLDOWN_HOURS);
 
-    // 2. Count Total Pending Users (For Logging/Debugging)
-    // This tells us if our "Burst" is big enough
+    // 2. Count Pending
     const { count: pendingCount } = await supabase
         .from('users')
         .select('id', { count: 'exact', head: true })
         .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`);
 
-    // 3. Fetch Batch of Users (Oldest Synced First)
+    // 3. Fetch Batch
     const { data: users, error: userError } = await supabase
         .from('users')
         .select('id, phone, last_synced_at')
         .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`)
-        .order('last_synced_at', { ascending: true, nullsFirst: true }) // CRITICAL: Always pick the ones waiting longest
+        .order('last_synced_at', { ascending: true, nullsFirst: true })
         .limit(USER_LIMIT_PER_RUN);
 
     if (userError) throw new Error(`User Fetch Error: ${userError.message}`);
@@ -55,13 +61,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ message: "All users up to date.", remaining: 0 });
     }
 
-    console.log(`Processing ${users.length} users. (${pendingCount || 0} total pending in queue)`);
+    console.log(`🔎 Processing ${users.length} users. (${pendingCount || 0} total pending)`);
 
     // 4. Load Machine Map
     const { data: machines } = await supabase
         .from('machines')
         .select('device_no, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco, rate_glass');
     
+    if (!machines || machines.length === 0) {
+        console.warn("⚠️ WARNING: No machines found in DB. All imports will fail.");
+    }
+
     const machineMap: Record<string, any> = {};
     machines?.forEach(m => { if (m?.device_no) machineMap[m.device_no] = m; });
 
@@ -73,16 +83,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const chunk = users.slice(i, i + BATCH_SIZE);
         
         const results = await Promise.allSettled(chunk.map(async (user) => {
-            // ✅ OPTIMISTIC LOCK: Update timestamp immediately so the next "Burst" run ignores these users
+            // Update timestamp first
             await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
             
+            // Fetch API
             const apiRecords = await fetchExternalRecords(user.phone);
             
-            if (apiRecords && apiRecords.length > 0) {
-                apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
-                return await processUserRecords(user, apiRecords, machineMap);
+            // DEBUG LOG IF EMPTY
+            if (!apiRecords || apiRecords.length === 0) {
+                // console.log(`ℹ️ No records found for ${user.phone}`); // Uncomment if needed
+                return 0;
             }
-            return 0;
+            
+            // Sort
+            apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
+            
+            // Process
+            return await processUserRecords(user, apiRecords, machineMap);
         }));
 
         results.forEach(r => {
@@ -107,17 +124,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-// ... (Keep existing fetchExternalRecords, processUserRecords, checkCleaningEvent, detectWasteType helpers exactly as they are) ...
 // --------------------------------------------------------
-// API HELPERS (Paste the same helper functions here from previous response)
+// API HELPERS
 // --------------------------------------------------------
 
 async function fetchExternalRecords(phone: string) {
     const HOST = "https://api.autogcm.com"; 
     const MERCHANT_NO = process.env.VITE_MERCHANT_NO;
-    const SECRET = process.env.API_SECRET; 
+    
+    // ✅ CHANGED to VITE_API_SECRET to match your working proxy.ts
+    const SECRET = process.env.VITE_API_SECRET; 
 
-    if (!MERCHANT_NO || !SECRET) return [];
+    if (!MERCHANT_NO || !SECRET) {
+        console.error("❌ ABORT: Secrets Missing in Cron Job!"); 
+        return [];
+    }
 
     try {
         const timestamp = Date.now().toString();
@@ -135,12 +156,18 @@ async function fetchExternalRecords(phone: string) {
             timeout: 5000 
         });
 
+        // ✅ Debug Log if API returns non-200 logic code
+        if (res.data.code !== 200) {
+            console.error(`⚠️ API Error for ${phone}: Code ${res.data.code}, Msg: ${res.data.msg}`);
+            return [];
+        }
+
         if (res.data.code === 200 && res.data.data) {
             return res.data.data.list || [];
         }
         return [];
     } catch (e: any) {
-        console.error(`API Fetch failed for ${phone}: ${e.message}`);
+        console.error(`❌ API Fetch Exception for ${phone}: ${e.message}`);
         return [];
     }
 }
@@ -148,7 +175,6 @@ async function fetchExternalRecords(phone: string) {
 async function processUserRecords(user: any, apiRecords: any[], machineMap: Record<string, any>) {
     let importedCount = 0;
     
-    // Bulk fetch existing IDs
     const remoteIds = apiRecords.map((r: any) => r.id);
     const { data: existingRows } = await supabase
         .from('submission_reviews')
@@ -161,14 +187,15 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
     for (const record of apiRecords) {
         const existing = existingMap.get(record.id);
         
-        // 1. Cleaning Check
+        // 1. Cleaning Check (Using SAFEGUARDED version)
         if (Number(record.weight) > 0) {
              await checkCleaningEvent(record);
         }
 
-        // 2. Handle Existing (Update if pending -> verified)
+        // 2. Handle Existing
         if (existing) {
              const machinePoints = Number(record.integral || 0);
+             // Auto-verify if machine confirms points
              if (existing.status === 'PENDING' && machinePoints > 0) {
                 await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
@@ -182,7 +209,10 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
 
         // 3. Prepare New Record
         const machine = machineMap[record.deviceNo];
-        if (!machine) continue;
+        if (!machine) {
+            // console.warn(`⚠️ Skipping unknown machine: ${record.deviceNo}`);
+            continue;
+        }
 
         const weight = Number(record.weight || 0);
         let wasteType = detectWasteType(record);
@@ -222,24 +252,29 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
     }
 
     if (recordsToInsert.length > 0) {
-        await supabase.from('submission_reviews').insert(recordsToInsert);
+        const { error } = await supabase.from('submission_reviews').insert(recordsToInsert);
+        if (error) console.error(`❌ DB Insert Error for ${user.phone}:`, error.message);
     }
 
     return importedCount;
 }
 
+// ✅ CLEANING SAFEGUARD (Added Global Check)
 async function checkCleaningEvent(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
         const userWeight = Number(apiRecord.weight || 0); 
         
+        // 1. GLOBAL SAFEGUARD: "Impossible Physics" (Fixes Yati's case)
         if (userWeight > 0 && currentWeight < 0.1) return;
+
+        // 2. UCO SAFEGUARD
         const isUCO = UCO_DEVICES.includes(apiRecord.deviceNo);
         if (isUCO && currentWeight < 0.1) return;
 
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
-            .select('bin_weight_snapshot, waste_type, photo_url, submitted_at') // Added submitted_at
+            .select('bin_weight_snapshot, waste_type, photo_url, submitted_at')
             .eq('device_no', apiRecord.deviceNo)
             .lt('submitted_at', apiRecord.createTime) 
             .order('submitted_at', { ascending: false })
@@ -281,7 +316,6 @@ async function checkCleaningEvent(apiRecord: any) {
 function detectWasteType(record: any): string {
     const rawName = record.rubbishLogDetailsVOList?.[0]?.rubbishName || '';
     const typeKey = rawName.toLowerCase();
-    
     if (typeKey.includes('paper') || typeKey.includes('纸')) return 'Paper';
     if (typeKey.includes('can') || typeKey.includes('罐')) return 'Aluminium Can';
     if (typeKey.includes('glass') || typeKey.includes('玻')) return 'Glass';
