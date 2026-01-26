@@ -83,11 +83,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         payload.nikeName = user.nickname;
     }
 
-    // FIX: Check if avatar exists AND is a string before using it
-    if (user.avatar_url && typeof user.avatar_url === 'string') {
-        payload.avatarUrl = user.avatar_url;
-    }
-
+    // FIX: FORCE Default Avatar for Vendor
+    // Replace the old check that sent user.avatar_url
+    payload.avatarUrl = "https://lassification.oss-cn-shenzhen.aliyuncs.com/static/mini/imgv3/head.png";
 
     // Call the API
     const profile = await callAutoGCM('/api/open/v1/user/account/sync', 'POST', payload);

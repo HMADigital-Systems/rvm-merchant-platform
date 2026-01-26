@@ -42,16 +42,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ✅ NEW: ROBUST SANITY FILTER (ALL MACHINES)
         // ---------------------------------------------------------
         const submissions = rawSubmissions.filter(sub => {
-            const binWeight = Number(sub.bin_weight_snapshot || 0);
+            // 🚨 FIX: Get the RAW value first. Do NOT use || 0 yet.
+            const rawBin = sub.bin_weight_snapshot; 
+            
+            // 1. STRICT NULL CHECK
+            // If sensor sent null/undefined, the data is invalid. Ignore strictly.
+            // This prevents "null" becoming "0" and triggering false cleaning.
+            if (rawBin === null || rawBin === undefined) return false;
+
+            const binWeight = Number(rawBin);
             const userWeight = Number(sub.api_weight || 0);
             const isUCO = UCO_DEVICES.includes(machine.device_no) || sub.waste_type?.toUpperCase().includes('UCO');
 
-            // 1. GLOBAL RULE: Impossible Physics
+            // 2. GLOBAL RULE: Impossible Physics
             // If user added weight (>0) but machine says empty (<0.1), 
             // it's a sensor failure. Ignore this snapshot.
             if (userWeight > 0 && binWeight < 0.1) return false;
 
-            // 2. UCO SPECIFIC RULES
+            // 3. UCO SPECIFIC RULES
             if (isUCO) {
                 // Ignore if user transaction failed (0 input) -> Machine reports 0 bin
                 if (userWeight === 0) return false;
@@ -68,8 +76,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const prev = submissions[i - 1];
             const curr = submissions[i];
 
-            const prevWeight = Number(prev.bin_weight_snapshot || 0);
-            const currWeight = Number(curr.bin_weight_snapshot || 0);
+            const prevWeight = Number(prev.bin_weight_snapshot);
+            const currWeight = Number(curr.bin_weight_snapshot);
 
             // --- DETECTION LOGIC ---
             // 1. Was it full? (> 0.5kg)

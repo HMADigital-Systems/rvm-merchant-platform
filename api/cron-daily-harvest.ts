@@ -3,20 +3,24 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import crypto from 'crypto';
 
-// 1. Initialize Supabase
+// --------------------------------------------------------
+// CONFIGURATION
+// --------------------------------------------------------
+const BATCH_SIZE = 5; 
+const USER_LIMIT_PER_RUN = 50; 
+const FETCH_LIMIT = 50; 
+const SYNC_COOLDOWN_HOURS = 2; 
+const UCO_DEVICES = ['071582000007', '071582000009'];
+
+// Initialize Supabase
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; 
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Service Role bypasses RLS
 
 if (!supabaseUrl || !supabaseKey) {
-    console.error("❌ Missing Env Vars for Supabase");
+    console.error("❌ CRITICAL: Supabase Env Vars missing!");
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Configuration
-const USERS_PER_RUN = 10;
-const FETCH_LIMIT = 20; 
-const UCO_DEVICES = ['071582000007', '071582000009'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 🔒 Security Check
@@ -25,63 +29,94 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    console.log("🚜 [CRON] Starting Daily Harvest...");
+    console.log("🚜 [CRON] Starting Batched Harvest...");
 
-    // 1. Get Users
+    // 1. Debug Environment Variables
+    if (!process.env.VITE_MERCHANT_NO) console.error("❌ ERROR: VITE_MERCHANT_NO is missing in Vercel!");
+    // ✅ Reverted to VITE_API_SECRET to ensure it works with your existing setup
+    if (!process.env.VITE_API_SECRET) console.error("❌ ERROR: VITE_API_SECRET is missing in Vercel!");
+
+    // 1. Define "Stale" Cutoff
+    const cutoffDate = new Date();
+    cutoffDate.setHours(cutoffDate.getHours() - SYNC_COOLDOWN_HOURS);
+
+    // 2. Count Pending
+    const { count: pendingCount } = await supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`);
+
+    // 3. Fetch Batch
     const { data: users, error: userError } = await supabase
         .from('users')
         .select('id, phone, last_synced_at')
+        .or(`last_synced_at.is.null,last_synced_at.lt.${cutoffDate.toISOString()}`)
         .order('last_synced_at', { ascending: true, nullsFirst: true })
-        .limit(USERS_PER_RUN);
+        .limit(USER_LIMIT_PER_RUN);
 
     if (userError) throw new Error(`User Fetch Error: ${userError.message}`);
 
     if (!users || users.length === 0) {
-        return res.status(200).json({ message: "No users to sync" });
+        console.log("✅ All users are up to date.");
+        return res.status(200).json({ message: "All users up to date.", remaining: 0 });
     }
 
-    // 2. Load Machine Map
+    console.log(`🔎 Processing ${users.length} users. (${pendingCount || 0} total pending)`);
+
+    // 4. Load Machine Map
     const { data: machines } = await supabase
         .from('machines')
         .select('device_no, merchant_id, rate_plastic, rate_can, rate_paper, rate_uco, rate_glass');
     
+    if (!machines || machines.length === 0) {
+        console.warn("⚠️ WARNING: No machines found in DB. All imports will fail.");
+    }
+
     const machineMap: Record<string, any> = {};
-    machines?.forEach(m => {
-        if (m?.device_no) machineMap[m.device_no] = m;
-    });
+    machines?.forEach(m => { if (m?.device_no) machineMap[m.device_no] = m; });
 
     let totalImported = 0;
     const now = new Date();
 
-    // 3. Process Users (Parallel)
-    const results = await Promise.allSettled(users.map(async (user) => {
+    // 5. Process Batch
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+        const chunk = users.slice(i, i + BATCH_SIZE);
         
-        if (user.last_synced_at) {
-            const diff = (now.getTime() - new Date(user.last_synced_at).getTime()) / 60000;
-            if (diff < 10) return 0; 
-        }
-
-        const apiRecords = await fetchExternalRecords(user.phone);
-        
-        let count = 0;
-        if (apiRecords && apiRecords.length > 0) {
-            // Sort Oldest -> Newest for correct cleaning detection logic
+        const results = await Promise.allSettled(chunk.map(async (user) => {
+            // Update timestamp first
+            await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
+            
+            // Fetch API
+            const apiRecords = await fetchExternalRecords(user.phone);
+            
+            // DEBUG LOG IF EMPTY
+            if (!apiRecords || apiRecords.length === 0) {
+                // console.log(`ℹ️ No records found for ${user.phone}`); // Uncomment if needed
+                return 0;
+            }
+            
+            // Sort
             apiRecords.sort((a: any, b: any) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
-            count = await processUserRecords(user, apiRecords, machineMap);
-        }
+            
+            // Process
+            return await processUserRecords(user, apiRecords, machineMap);
+        }));
 
-        await supabase.from('users').update({ last_synced_at: now.toISOString() }).eq('id', user.id);
-        
-        return count;
-    }));
+        results.forEach(r => {
+            if (r.status === 'fulfilled') totalImported += r.value;
+            else console.error("❌ Batch Error:", r.reason);
+        });
+    }
 
-    results.forEach(r => {
-        if (r.status === 'fulfilled') totalImported += r.value;
-        else console.error("❌ User Sync Failed:", r.reason);
+    const remaining = (pendingCount || 0) - users.length;
+    console.log(`✅ [CRON] Batch Complete. Imported: ${totalImported}. Remaining in Queue: ${remaining}`);
+    
+    return res.status(200).json({ 
+        success: true, 
+        imported: totalImported, 
+        processed: users.length,
+        remaining_in_queue: remaining 
     });
-
-    console.log(`✅ [CRON] Complete. Total Imported: ${totalImported}`);
-    return res.status(200).json({ success: true, imported: totalImported });
 
   } catch (error: any) {
     console.error("❌ [CRON] Critical Error:", error.message);
@@ -95,13 +130,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function fetchExternalRecords(phone: string) {
     const HOST = "https://api.autogcm.com"; 
-    
-    // ✅ SECURITY: No VITE_ prefix for server-side secrets
     const MERCHANT_NO = process.env.VITE_MERCHANT_NO;
-    const SECRET = process.env.API_SECRET; 
+    
+    // ✅ CHANGED to VITE_API_SECRET to match your working proxy.ts
+    const SECRET = process.env.VITE_API_SECRET; 
 
     if (!MERCHANT_NO || !SECRET) {
-        console.error("❌ Missing API Credentials in Env Vars");
+        console.error("❌ ABORT: Secrets Missing in Cron Job!"); 
         return [];
     }
 
@@ -111,11 +146,7 @@ async function fetchExternalRecords(phone: string) {
         const sign = crypto.createHash('md5').update(rawSign).digest('hex');
 
         const res = await axios.get(`${HOST}/api/open/v1/put`, {
-            params: {
-                phone: phone,
-                pageNum: 1, 
-                pageSize: FETCH_LIMIT 
-            },
+            params: { phone: phone, pageNum: 1, pageSize: FETCH_LIMIT },
             headers: {
                 'Merchant-no': MERCHANT_NO,
                 'timestamp': timestamp,
@@ -125,19 +156,25 @@ async function fetchExternalRecords(phone: string) {
             timeout: 5000 
         });
 
+        // ✅ Debug Log if API returns non-200 logic code
+        if (res.data.code !== 200) {
+            console.error(`⚠️ API Error for ${phone}: Code ${res.data.code}, Msg: ${res.data.msg}`);
+            return [];
+        }
+
         if (res.data.code === 200 && res.data.data) {
             return res.data.data.list || [];
         }
         return [];
     } catch (e: any) {
-        console.error(`API Fetch failed for ${phone}: ${e.message}`);
+        console.error(`❌ API Fetch Exception for ${phone}: ${e.message}`);
         return [];
     }
 }
 
 async function processUserRecords(user: any, apiRecords: any[], machineMap: Record<string, any>) {
     let importedCount = 0;
-
+    
     const remoteIds = apiRecords.map((r: any) => r.id);
     const { data: existingRows } = await supabase
         .from('submission_reviews')
@@ -145,32 +182,37 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         .in('vendor_record_id', remoteIds);
 
     const existingMap = new Map(existingRows?.map(r => [r.vendor_record_id, r]));
+    const recordsToInsert: any[] = [];
 
     for (const record of apiRecords) {
         const existing = existingMap.get(record.id);
-        const machinePoints = Number(record.integral || 0);
-
-        // A. CHECK FOR CLEANING (Calls the updated function)
+        
+        // 1. Cleaning Check (Using SAFEGUARDED version)
         if (Number(record.weight) > 0) {
-            await checkCleaningEvent(record);
+             await checkCleaningEvent(record);
         }
 
-        // B. HANDLE EXISTING
+        // 2. Handle Existing
         if (existing) {
-            if (existing.status === 'PENDING' && machinePoints > 0) {
+             const machinePoints = Number(record.integral || 0);
+             // Auto-verify if machine confirms points
+             if (existing.status === 'PENDING' && machinePoints > 0) {
                 await supabase.from('submission_reviews').update({
                     status: 'VERIFIED',
                     confirmed_weight: record.weight,
                     machine_given_points: machinePoints,
                     reviewed_at: new Date().toISOString()
                 }).eq('id', existing.id);
-            }
-            continue; 
+             }
+             continue; 
         }
 
-        // C. INSERT NEW RECORD
+        // 3. Prepare New Record
         const machine = machineMap[record.deviceNo];
-        if (!machine) continue;
+        if (!machine) {
+            // console.warn(`⚠️ Skipping unknown machine: ${record.deviceNo}`);
+            continue;
+        }
 
         const weight = Number(record.weight || 0);
         let wasteType = detectWasteType(record);
@@ -184,9 +226,10 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         else rate = Number(machine.rate_plastic || 0);
 
         const calculatedValue = Number((weight * rate).toFixed(2));
+        const machinePoints = Number(record.integral || 0);
         const isVerified = machinePoints > 0;
 
-        await supabase.from('submission_reviews').insert({
+        recordsToInsert.push({
             vendor_record_id: record.id,
             user_id: user.id,
             phone: user.phone,
@@ -207,27 +250,31 @@ async function processUserRecords(user: any, apiRecords: any[], machineMap: Reco
         
         importedCount++;
     }
+
+    if (recordsToInsert.length > 0) {
+        const { error } = await supabase.from('submission_reviews').insert(recordsToInsert);
+        if (error) console.error(`❌ DB Insert Error for ${user.phone}:`, error.message);
+    }
+
     return importedCount;
 }
 
-// ✅ UPDATED SAFEGUARD
+// ✅ CLEANING SAFEGUARD (Added Global Check)
 async function checkCleaningEvent(apiRecord: any) {
     try {
         const currentWeight = Number(apiRecord.positionWeight || 0);
-        const userWeight = Number(apiRecord.weight || 0); // Amount user recycled
+        const userWeight = Number(apiRecord.weight || 0); 
         
-        // ✅ 1. GLOBAL SAFEGUARD (Fixes Yati's case):
-        // If user recycled (>0kg) but machine sensor says empty (0kg), 
-        // it is a sensor glitch during transaction. Do NOT treat as cleaning.
+        // 1. GLOBAL SAFEGUARD: "Impossible Physics" (Fixes Yati's case)
         if (userWeight > 0 && currentWeight < 0.1) return;
 
-        // ✅ 2. UCO SAFEGUARD (Existing)
+        // 2. UCO SAFEGUARD
         const isUCO = UCO_DEVICES.includes(apiRecord.deviceNo);
         if (isUCO && currentWeight < 0.1) return;
 
         const { data: lastRecord } = await supabase
             .from('submission_reviews')
-            .select('bin_weight_snapshot, waste_type, photo_url')
+            .select('bin_weight_snapshot, waste_type, photo_url, submitted_at')
             .eq('device_no', apiRecord.deviceNo)
             .lt('submitted_at', apiRecord.createTime) 
             .order('submitted_at', { ascending: false })
@@ -269,7 +316,6 @@ async function checkCleaningEvent(apiRecord: any) {
 function detectWasteType(record: any): string {
     const rawName = record.rubbishLogDetailsVOList?.[0]?.rubbishName || '';
     const typeKey = rawName.toLowerCase();
-    
     if (typeKey.includes('paper') || typeKey.includes('纸')) return 'Paper';
     if (typeKey.includes('can') || typeKey.includes('罐')) return 'Aluminium Can';
     if (typeKey.includes('glass') || typeKey.includes('玻')) return 'Glass';

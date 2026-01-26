@@ -13,6 +13,7 @@ import MachineStatus from '../views/MachineStatus.vue';
 import Login from '../views/Login.vue';
 import AdminManager from '../views/AdminManager.vue';
 import MerchantSettings from '../views/MerchantSettings.vue';
+import BigDataPlatform from '../views/BigDataPlatform.vue';
 
 const MerchantsManager = () => import('../views/SuperAdmin/Merchants.vue');
 const ManageClientSettings = () => import('../views/SuperAdmin/ManageClientSettings.vue');
@@ -28,6 +29,12 @@ const router = createRouter({
       name: 'login', 
       component: Login,
       meta: { hideSidebar: true, requiresAuth: false, title: 'Login' } 
+    },
+    {
+      path: '/big-data',
+      name: 'BigDataPlatform',
+      component: BigDataPlatform,
+      meta: { requiresAuth: true, title: 'Big Data Platform' }
     },
 
     // --------------------------------------------------------
