@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { X, PieChart, FileSpreadsheet } from 'lucide-vue-next';
+import { X, PieChart, FileSpreadsheet, FileText } from 'lucide-vue-next';
 import { useExcelExport, type ExportMode } from '../composables/useExcelExport';
+import { useWordExport } from '../composables/useWordExport';
 
 const props = defineProps<{
   isOpen: boolean;
   data: any[];
-  mode: ExportMode; // ✅ NEW: Prop to distinguish mode
+  mode: ExportMode; // NEW: Prop to distinguish mode
 }>();
 
 const emit = defineEmits(['close']);
 const { generateSummary, downloadExcel } = useExcelExport();
+const { downloadWord } = useWordExport();
 
 // Pass mode to summary generator
 const stats = computed(() => generateSummary(props.data, props.mode));
@@ -29,8 +31,13 @@ const percentages = computed(() => {
   };
 });
 
-const handleDownload = () => {
+const handleExcelDownload = () => {
   downloadExcel(props.data, props.mode);
+  emit('close');
+};
+
+const handleWordDownload = async () => {
+  await downloadWord(props.data, props.mode);
   emit('close');
 };
 </script>
@@ -93,12 +100,13 @@ const handleDownload = () => {
         </p>
       </div>
 
-      <div class="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
-        <button @click="emit('close')" class="flex-1 py-2.5 text-sm font-medium text-gray-600 hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-200 rounded-xl transition-all">
-          Cancel
+      <div class="p-4 border-t border-gray-100 bg-gray-50 grid grid-cols-2 gap-3">
+        <button @click="handleWordDownload" class="py-2.5 text-sm font-bold text-blue-700 bg-blue-100 hover:bg-blue-200 border border-blue-200 rounded-xl transition-all flex items-center justify-center gap-2">
+          <FileText :size="18" /> Word Doc
         </button>
-        <button @click="handleDownload" class="flex-1 py-2.5 text-sm font-bold text-white bg-gray-900 hover:bg-gray-800 rounded-xl shadow-lg shadow-gray-200 flex items-center justify-center gap-2 transition-all">
-          <FileSpreadsheet :size="18" /> Download Excel
+
+        <button @click="handleExcelDownload" class="py-2.5 text-sm font-bold text-white bg-gray-900 hover:bg-gray-800 rounded-xl shadow-lg shadow-gray-200 flex items-center justify-center gap-2 transition-all">
+          <FileSpreadsheet :size="18" /> Excel Sheet
         </button>
       </div>
 

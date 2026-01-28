@@ -9,18 +9,15 @@ export function useExcelExport() {
     const totalCount = data.length;
     let totalValue = 0; // Represents Amount (Points) OR Weight (KG)
     
-    // Status counters
     const statusCounts: Record<string, number> = {};
 
     data.forEach(item => {
-      // Summation Logic
       if (mode === 'withdrawals') {
         totalValue += Number(item.amount || 0);
       } else {
         totalValue += Number(item.bag_weight_collected || 0);
       }
 
-      // Status Counting
       const status = item.status || 'UNKNOWN';
       statusCounts[status] = (statusCounts[status] || 0) + 1;
     });
@@ -28,48 +25,52 @@ export function useExcelExport() {
     return { totalCount, totalValue, statusCounts };
   };
 
-  // 2. Generic Excel Downloader
+  // 2. Excel Downloader
   const downloadExcel = (data: any[], mode: ExportMode) => {
     let filename = 'export';
     let rows: any[] = [];
 
-    // A. Define Columns based on Mode
     if (mode === 'withdrawals') {
-        filename = 'Withdrawals';
+        filename = 'Withdrawals_Report';
+        // ✅ UPDATED: Added 'Holder Name' and reordered columns
         rows = data.map(item => ({
-            'Date': new Date(item.created_at).toLocaleDateString(),
-            'Time': new Date(item.created_at).toLocaleTimeString(),
-            'User': item.users?.nickname || 'Guest',
+            'Requested Date': new Date(item.created_at).toLocaleDateString(),
+            'Requested Time': new Date(item.created_at).toLocaleTimeString(),
+            'Name': item.users?.nickname || 'Guest',
             'Phone': item.users?.phone || '-',
-            'Bank': item.bank_name || '-',
-            'Account': item.account_number || '-',
+            'Bank Name': item.bank_name || '-',
+            'Holder Name': item.account_holder_name || '-', // New Field
+            'Account Number': item.account_number || '-',
             'Amount (pts)': Number(item.amount),
             'Status': item.status,
             'Note': item.admin_note || ''
         }));
     } else {
-        filename = 'CleaningLogs';
+        filename = 'Cleaning_Logs';
         rows = data.map(item => ({
             'Date': new Date(item.cleaned_at).toLocaleDateString(),
             'Time': new Date(item.cleaned_at).toLocaleTimeString(),
             'Machine ID': item.device_no,
             'Waste Type': item.waste_type,
-            'Collected Weight (kg)': Number(item.bag_weight_collected),
+            'Weight (kg)': Number(item.bag_weight_collected),
             'Operator': item.cleaner_name || 'System',
             'Status': item.status,
             'Photo URL': item.photo_url || ''
         }));
     }
 
-    // B. Create Workbook
+    // Create Workbook
     const wb = XLSX.utils.book_new();
     const wsDetails = XLSX.utils.json_to_sheet(rows);
+    
+    // Auto-width columns roughly
+    const wscols = Object.keys(rows[0] || {}).map(() => ({ wch: 20 }));
+    wsDetails['!cols'] = wscols;
+
     XLSX.utils.book_append_sheet(wb, wsDetails, "Details");
 
-    // C. Create Summary Sheet
+    // Summary Sheet
     const summary = generateSummary(data, mode);
-    
-    // Explicitly type the rows array as (string | number)[][]
     const summaryRows: (string | number)[][] = [
         ['Report Type', mode.toUpperCase()],
         ['Generated At', new Date().toLocaleString()],
@@ -81,7 +82,6 @@ export function useExcelExport() {
     ];
 
     Object.keys(summary.statusCounts).forEach(key => {
-        // ✅ FIX: Ensure the value is treated as a number
         summaryRows.push([key, Number(summary.statusCounts[key])]);
     });
 
