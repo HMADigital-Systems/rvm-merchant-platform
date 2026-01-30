@@ -93,36 +93,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     //  CRITICAL FIX: Define livePoints here so the rest of the file can use it!
     const livePoints = Number(profile?.data?.integral || 0);
 
-    // 4. Fetch History (Optimized for High Volume)
+    // 4. Fetch History (Aggressive Mode - Fetch All)
     let historyList: any[] = [];
     let pageNum = 1;
-    const pageSize = 50; 
+    const pageSize = 50; // API enforces max 50, so we loop efficiently
     let hasNext = true;
-    
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     
     log(`📡 Fetching history for ${phone}...`);
 
-    // 🔥 TIMEOUT PROTECTION: Track start time to prevent 502 Errors
-    const startTime = Date.now();
-    
-    // 🟢 OPTIMIZATION: Increased limit to 200 pages (10,000 records)
-    while (hasNext && pageNum <= 200) { 
-        
-        // Safety: If running longer than 8 seconds, stop fetching to save what we have.
-        // (Vercel Functions timeout at 10s, this leaves 2s to save data)
-        if (Date.now() - startTime > 8000) {
-            console.warn("⚠️ Time limit reached. Stopping fetch to ensure data saving.");
-            debugLog.push({ warning: "Time limit reached, partial fetch", pages: pageNum });
-            break;
-        }
+    while (hasNext) { 
+        // ❌ REMOVED: Time limit check (8000ms)
+        // ❌ REMOVED: setTimeout delay
 
-        // 🟢 OPTIMIZATION: Reduced delay to 50ms (Faster fetching)
-        if (pageNum > 1) await new Promise(r => setTimeout(r, 50));
-
+        // Call API (Removed date filters to fetch absolute history)
         const res = await callAutoGCM('/api/open/v1/put', 'GET', { 
-            phone, pageNum, pageSize, startTime: '2020-01-01', endTime: todayStr
+            phone, pageNum, pageSize 
         });
 
         const list = res?.data?.list || [];
@@ -136,12 +121,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (historyList.length >= totalItems) {
                 hasNext = false;
             } else {
-                // If we haven't reached the total yet, keep going
                 pageNum++;
             }
         } else {
             hasNext = false;
         }
+        
+        // Safety: Prevent infinite loop if API returns bad 'total' count
+        if (pageNum > 100) hasNext = false; 
     }
 
     debugLog.push({ step: "Fetch Complete", totalItems: historyList.length });
@@ -306,7 +293,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 🔥 INCREMENTAL SAVE SECTION (Prevent Data Loss on Timeout)
         // ==================================================================================
         // Save progress every 20 records (or whatever batch size works best for you)
-        if (index % 20 === 0) {
+        if (index % 50 === 0) {
             
             // 1. Update User Global Total Weight
             await supabase.from('users').update({
