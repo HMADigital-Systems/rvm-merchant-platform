@@ -1,13 +1,72 @@
 <script setup lang="ts">
-import { X, CreditCard, User, Building, ShieldAlert } from 'lucide-vue-next';
+import { ref, watch, computed } from 'vue';
+import { 
+  X, User, Building, 
+  ShieldAlert, ShieldCheck, CheckCircle2, 
+  AlertTriangle, RefreshCw, Lock 
+} from 'lucide-vue-next';
 
-defineProps<{
+const props = defineProps<{
   isOpen: boolean;
-  // FIX: Allow the prop to have extra properties like sub_withdrawals
   withdrawal: any; 
 }>();
 
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close', 'update-status']);
+
+const hasManualDeduction = ref(false);
+const isAuditing = ref(false);
+const auditResult = ref<any>(null); // Stores the API result from /api/sync-balance
+
+// Reset state when modal opens or withdrawal changes
+watch(() => props.withdrawal, () => {
+    hasManualDeduction.value = false;
+    auditResult.value = null; 
+    isAuditing.value = false;
+});
+
+// Logic: Does the user still have enough points after the audit?
+const sufficientFunds = computed(() => {
+    // If we haven't audited yet, we assume it's unsafe to approve
+    if (!auditResult.value) return false; 
+    
+    // If Audit returned 'RISK_DETECTED', we check the new adjusted balance
+    if (auditResult.value.status === 'RISK_DETECTED') {
+        return auditResult.value.newLocalBalance >= props.withdrawal.amount;
+    }
+    
+    // If 'MATCHED' or other safe status, funds are sufficient
+    return true; 
+});
+
+const runAudit = async () => {
+    isAuditing.value = true;
+    try {
+        const response = await fetch('/api/sync-balance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                userId: props.withdrawal.user_id, 
+                phone: props.withdrawal.users?.phone 
+            })
+        });
+        auditResult.value = await response.json();
+    } catch (e) {
+        console.error(e);
+        auditResult.value = { status: 'ERROR', msg: 'Audit connection failed' };
+    } finally {
+        isAuditing.value = false;
+    }
+};
+
+const handleApprove = () => {
+    emit('update-status', props.withdrawal.id, 'APPROVED');
+    emit('close');
+};
+
+const handleReject = () => {
+    emit('update-status', props.withdrawal.id, 'REJECTED');
+    emit('close');
+};
 </script>
 
 <template>
@@ -25,13 +84,13 @@ const emit = defineEmits(['close']);
 
       <div class="p-6 overflow-y-auto space-y-6">
 
-        <div class="flex justify-between items-center p-4 rounded-xl bg-gray-50 border border-gray-100">
+        <div class="flex justify-between items-center p-4 rounded-xl bg-gray-50 border border-gray-100 shadow-sm">
            <div>
               <div class="text-xs text-gray-500 uppercase font-bold tracking-wider">Amount Request</div>
               <div class="text-2xl font-bold text-gray-900">{{ withdrawal.amount }} pts</div>
            </div>
            <div class="text-right">
-              <div class="text-xs text-gray-500 uppercase font-bold tracking-wider">Current Status</div>
+              <div class="text-xs text-gray-500 uppercase font-bold tracking-wider">Status</div>
               <span :class="`inline-block mt-1 px-3 py-1 rounded-full text-xs font-bold ${
                 withdrawal.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
                 withdrawal.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
@@ -73,56 +132,104 @@ const emit = defineEmits(['close']);
                 <span class="font-mono text-gray-700">{{ withdrawal.users?.phone || '-' }}</span>
              </div>
              <div class="col-span-2">
-                <span class="block text-xs text-gray-500">User ID</span>
-                <span class="font-mono text-xs text-gray-400 break-all">{{ withdrawal.user_id }}</span>
+                <span class="block text-xs text-gray-500">Payment To</span>
+                <div class="font-medium text-gray-900">{{ withdrawal.bank_name }} - {{ withdrawal.account_number }}</div>
+                <div class="text-xs text-gray-400">{{ withdrawal.account_holder_name }}</div>
              </div>
           </div>
         </div>
 
-        <div>
-          <h4 class="flex items-center gap-2 text-sm font-bold text-gray-900 mb-3 border-b pb-2">
-            <CreditCard :size="16" class="text-purple-500"/> Payment Destination
-          </h4>
-          <div class="bg-slate-50 p-4 rounded-lg border border-slate-100 space-y-3">
-             <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <span class="block text-xs text-slate-400">Bank Name</span>
-                  <span class="font-bold text-slate-700">{{ withdrawal.bank_name || '-' }}</span>
-                </div>
-                <div>
-                  <span class="block text-xs text-slate-400">Holder Name</span>
-                  <span class="font-medium text-slate-700">{{ withdrawal.account_holder_name || '-' }}</span>
-                </div>
-             </div>
-             <div>
-                <span class="block text-xs text-slate-400">Account Number</span>
-                <span class="font-mono text-lg font-bold text-slate-800 tracking-wide">{{ withdrawal.account_number || '-' }}</span>
-             </div>
-          </div>
-        </div>
+        <div v-if="withdrawal.status === 'PENDING'" class="space-y-4">
+            
+            <h4 class="flex items-center gap-2 text-sm font-bold text-gray-900 border-b pb-2">
+                <ShieldCheck :size="16" class="text-blue-600"/> Financial Safety Check
+            </h4>
 
-        <div>
-          <h4 class="flex items-center gap-2 text-sm font-bold text-gray-900 mb-3 border-b pb-2">
-            <ShieldAlert :size="16" class="text-amber-500"/> Admin & Audit
-          </h4>
-          <div class="grid grid-cols-2 gap-4 text-sm">
-             <div>
-                <span class="block text-xs text-gray-500">Requested At</span>
-                <span class="text-gray-700">{{ new Date(withdrawal.created_at).toLocaleString() }}</span>
-             </div>
-             <div>
-                <span class="block text-xs text-gray-500">Last Updated</span>
-                <span class="text-gray-700">{{ new Date(withdrawal.updated_at).toLocaleString() }}</span>
-             </div>
-             <div class="col-span-2">
-                <span class="block text-xs text-gray-500">Admin Note</span>
-                <p v-if="withdrawal.admin_note" class="mt-1 text-sm bg-yellow-50 text-yellow-800 p-2 rounded border border-yellow-100">
-                  {{ withdrawal.admin_note }}
-                  <span v-if="withdrawal.reviewed_by" class="block mt-1 text-[10px] text-yellow-600 opacity-75">— {{ withdrawal.reviewed_by }}</span>
+            <div v-if="!auditResult" class="text-center bg-gray-50 rounded-xl p-5 border border-dashed border-gray-300">
+                <p class="text-sm text-gray-600 mb-3">
+                    Verify this user has not double-spent points on the legacy system.
                 </p>
-                <p v-else class="text-gray-400 italic text-sm">No notes provided.</p>
+                <button 
+                    @click="runAudit" 
+                    :disabled="isAuditing"
+                    class="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition flex items-center justify-center shadow-sm"
+                >
+                    <RefreshCw :size="16" :class="['mr-2', isAuditing ? 'animate-spin' : '']" />
+                    {{ isAuditing ? 'Auditing Balance...' : 'Run Live Audit' }}
+                </button>
+            </div>
+
+            <div v-else class="animate-in fade-in zoom-in-95 duration-200">
+                
+                <div v-if="!sufficientFunds" class="bg-red-50 p-4 rounded-xl border border-red-200 mb-4 flex items-start">
+                    <ShieldAlert class="w-5 h-5 text-red-600 mt-0.5 mr-3 flex-shrink-0" />
+                    <div>
+                        <h5 class="text-sm font-bold text-red-800">Risk Detected: Double Spending</h5>
+                        <p class="text-xs text-red-700 mt-1">
+                            The user spent points on the legacy app. After auto-deduction, they only have 
+                            <strong>{{ auditResult.newLocalBalance }} pts</strong> remaining, which is not enough for this request.
+                        </p>
+                    </div>
+                </div>
+
+                <div v-else class="bg-green-50 p-4 rounded-xl border border-green-200 mb-4 flex items-start">
+                    <ShieldCheck class="w-5 h-5 text-green-600 mt-0.5 mr-3 flex-shrink-0" />
+                    <div>
+                        <h5 class="text-sm font-bold text-green-800">Balance Verified</h5>
+                        <p class="text-xs text-green-700 mt-1">
+                            User has sufficient points. Safe to proceed with manual deduction.
+                        </p>
+                    </div>
+                </div>
+
+                <button 
+                    v-if="!sufficientFunds" 
+                    @click="handleReject" 
+                    class="w-full py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-md"
+                >
+                    Reject Withdrawal
+                </button>
+
+                <div v-else class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                     <div class="flex items-start mb-4">
+                        <AlertTriangle class="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                        <div class="ml-3">
+                            <h4 class="text-sm font-bold text-amber-800">Manual Deduction Required</h4>
+                            <p class="text-xs text-amber-700 mt-1 leading-relaxed">
+                                <strong>Safety Check Passed.</strong> Now, you must log in to the <strong>AutoGCM Backend</strong> and manually deduct 
+                                <span class="font-bold text-amber-900 bg-amber-100 px-1 rounded">{{ withdrawal.amount }} points</span>.
+                            </p>
+                            
+                            <label class="flex items-center space-x-2 mt-3 text-sm font-medium text-gray-700 cursor-pointer select-none p-2 hover:bg-amber-100/50 rounded transition-colors border border-transparent hover:border-amber-200">
+                                <input type="checkbox" v-model="hasManualDeduction" class="rounded border-gray-400 text-blue-600 w-4 h-4 focus:ring-amber-500" />
+                                <span>I confirm points are deducted.</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button @click="handleReject" class="flex-1 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">
+                            Reject
+                        </button>
+                        <button 
+                            @click="handleApprove"
+                            :disabled="!hasManualDeduction"
+                            :class="['flex-1 py-2 text-white font-medium rounded-lg transition-all flex items-center justify-center shadow-sm', hasManualDeduction ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed']"
+                        >
+                            <CheckCircle2 :size="16" class="mr-2" /> Approve & Pay
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div v-if="withdrawal.status === 'PENDING' && !auditResult" class="relative opacity-40 grayscale pointer-events-none select-none">
+             <div class="bg-gray-100 border border-gray-200 rounded-xl p-4 h-24 flex items-center justify-center">
+                 <div class="flex items-center text-gray-500 font-bold text-sm">
+                    <Lock :size="16" class="mr-2"/> Approval Locked
+                 </div>
              </div>
-          </div>
         </div>
 
       </div>

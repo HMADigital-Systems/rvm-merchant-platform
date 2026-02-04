@@ -10,6 +10,7 @@ export function useBigDataStats() {
   // Default to 'all' to show data immediately
   const timeFilter = ref('all'); 
   const dateRange = ref({ start: '', end: '' });
+  const selectedMachineId = ref('');
 
   const totalUsers = ref(0);
   const totalWeight = ref(0); 
@@ -122,9 +123,29 @@ export function useBigDataStats() {
     statsLoading.value = true;
 
     try {
-      let startDateStr = '';
+      // ✅ 1. UPDATE "ALL TIME" TOTALS (Blue & Yellow Boxes)
+      // Logic: If machine selected, sum specific machine data (All Time). If not, use Global RPCs.
+      if (selectedMachineId.value) {
+          const { data: allTimeData } = await supabase
+            .from('submission_reviews')
+            .select('api_weight, calculated_value')
+            .eq('device_no', selectedMachineId.value);
+            
+          if (allTimeData) {
+             totalWeight.value = allTimeData.reduce((sum, r) => sum + (Number(r.api_weight) || 0), 0);
+             totalLifetimePoints.value = allTimeData.reduce((sum, r) => sum + (Number(r.calculated_value) || 0), 0);
+          }
+      } else {
+          // Revert to Global RPCs
+          const { data: weightSum } = await supabase.rpc('get_total_weight', { merchant_uuid: auth.merchantId || null });
+          if (weightSum !== null) totalWeight.value = Number(weightSum);
 
-      // 1. Date Logic
+          const { data: pointSum } = await supabase.rpc('get_total_points', { merchant_uuid: auth.merchantId || null });
+          if (pointSum !== null) totalLifetimePoints.value = Number(pointSum);
+      }
+
+      // 2. PREPARE DATE FILTER
+      let startDateStr = '';
       if (dateRange.value.start) {
         startDateStr = new Date(dateRange.value.start).toISOString();
       } else {
@@ -139,31 +160,40 @@ export function useBigDataStats() {
             d.setMonth(d.getMonth() - 1);
             startDateStr = d.toISOString();
         } else if (timeFilter.value === 'all') {
-            // ✅ FIX 1: "All" now means truly ALL time (empty string = no filter)
             startDateStr = ''; 
         }
       }
 
-      // 2. FETCH SUMMARY (RPC)
-      const { data: rpcStats } = await supabase.rpc('get_filtered_stats', {
-        merchant_uuid: auth.merchantId || null,
-        filter_date: startDateStr || null
-      });
+      // ✅ 3. FETCH PERIOD SUMMARY (Small Boxes)
+      if (!selectedMachineId.value) {
+          const { data: rpcStats } = await supabase.rpc('get_filtered_stats', {
+            merchant_uuid: auth.merchantId || null,
+            filter_date: startDateStr || null
+          });
 
-      if (rpcStats) {
-        summary.value.deliveryVolume = Number(rpcStats.deliveryVolume) || 0;
-        summary.value.submissions = Number(rpcStats.submissions) || 0;
-        summary.value.pointsGiven = Number(rpcStats.pointsGiven) || 0;
+          if (rpcStats) {
+            summary.value.deliveryVolume = Number(rpcStats.deliveryVolume) || 0;
+            summary.value.submissions = Number(rpcStats.submissions) || 0;
+            summary.value.pointsGiven = Number(rpcStats.pointsGiven) || 0;
+          }
+      } else {
+          // Reset to 0, we will sum manually in the loop below
+          summary.value = { deliveryVolume: 0, submissions: 0, newUsers: 0, pointsGiven: 0 };
       }
 
-      // 3. WASTE TRENDS (Submissions + Collections)
+      // 4. WASTE TRENDS (Submissions)
       const wasteMap = new Map();
 
-      // A. Submissions (Delivery)
       let qSubs = supabase.from('submission_reviews')
-        .select('api_weight, submitted_at');
+        .select('api_weight, submitted_at, calculated_value'); 
+      
       if (startDateStr) qSubs = qSubs.gte('submitted_at', startDateStr);
       if (auth.merchantId) qSubs = qSubs.eq('merchant_id', auth.merchantId);
+      
+      // ✅ Filter by Machine
+      if (selectedMachineId.value) {
+        qSubs = qSubs.eq('device_no', selectedMachineId.value);
+      }
       
       const { data: subsData } = await qSubs;
       if (subsData) {
@@ -172,19 +202,30 @@ export function useBigDataStats() {
            if (!wasteMap.has(day)) wasteMap.set(day, { date: day, delivery_weight: 0, delivery_count: 0, collection_weight: 0, collection_count: 0 });
            const entry = wasteMap.get(day);
            
-           // FIX: Clamp negative values (calibration data) to 0 so the graph doesn't dip
            const w = Number(r.api_weight) || 0;
            entry.delivery_weight += w < 0 ? 0 : w;
-           
            entry.delivery_count += 1;
+
+           // ✅ Manual Summary Accumulation
+           if (selectedMachineId.value) {
+             summary.value.deliveryVolume += (w < 0 ? 0 : w);
+             summary.value.submissions += 1;
+             summary.value.pointsGiven += (Number(r.calculated_value) || 0);
+           }
         });
       }
 
-      // B. Cleaning (Collection)
+      // 5. CLEANING RECORDS
       let qClean = supabase.from('cleaning_records')
         .select('bag_weight_collected, cleaned_at');
+        
       if (startDateStr) qClean = qClean.gte('cleaned_at', startDateStr);
       if (auth.merchantId) qClean = qClean.eq('merchant_id', auth.merchantId);
+      
+      // ✅ Filter by Machine
+      if (selectedMachineId.value) {
+        qClean = qClean.eq('device_no', selectedMachineId.value);
+      }
 
       const { data: cleanData } = await qClean;
       if (cleanData) {
@@ -200,54 +241,52 @@ export function useBigDataStats() {
       
       wasteTrends.value = Array.from(wasteMap.values()).sort((a: any, b: any) => a.date.localeCompare(b.date));
 
+      // 6. WITHDRAWAL TRENDS
+      // ✅ Hide if machine selected (withdrawals are user-based)
+      if (selectedMachineId.value) {
+         withdrawalTrends.value = [];
+      } else {
+         let qWith = supabase.from('withdrawals')
+            .select('amount, status, created_at');
+         if (startDateStr) qWith = qWith.gte('created_at', startDateStr);
+         if (auth.merchantId) qWith = qWith.eq('merchant_id', auth.merchantId);
 
-      // 4. WITHDRAWAL TRENDS
-      let qWith = supabase.from('withdrawals')
-        .select('amount, status, created_at');
-      if (startDateStr) qWith = qWith.gte('created_at', startDateStr);
-      if (auth.merchantId) qWith = qWith.eq('merchant_id', auth.merchantId);
-
-      const { data: wData } = await qWith;
-      if (wData) {
-        const withMap = new Map();
-        wData.forEach((w: any) => {
-             const day = w.created_at.split('T')[0];
-             if (!withMap.has(day)) withMap.set(day, { 
-                 date: day, 
-                 request_amount: 0, 
-                 approved_amount: 0, 
-                 paid_amount: 0,
-                 applicants: 0 
-             });
-             
-             const entry = withMap.get(day);
-             const amt = Number(w.amount) || 0;
-             
-             entry.request_amount += amt;
-             entry.applicants += 1;
-             
-             const status = (w.status || '').toUpperCase();
-             if (status === 'APPROVED' || status === 'PAID') {
-                 entry.approved_amount += amt;
-             }
-             if (status === 'PAID') {
-                 entry.paid_amount += amt;
-             }
-        });
-        withdrawalTrends.value = Array.from(withMap.values()).sort((a: any, b: any) => a.date.localeCompare(b.date));
+         const { data: wData } = await qWith;
+         if (wData) {
+            const withMap = new Map();
+            wData.forEach((w: any) => {
+                 const day = w.created_at.split('T')[0];
+                 if (!withMap.has(day)) withMap.set(day, { 
+                     date: day, request_amount: 0, approved_amount: 0, paid_amount: 0, applicants: 0 
+                 });
+                 const entry = withMap.get(day);
+                 const amt = Number(w.amount) || 0;
+                 entry.request_amount += amt;
+                 entry.applicants += 1;
+                 const status = (w.status || '').toUpperCase();
+                 if (status === 'APPROVED' || status === 'PAID') entry.approved_amount += amt;
+            });
+            withdrawalTrends.value = Array.from(withMap.values()).sort((a: any, b: any) => a.date.localeCompare(b.date));
+         }
       }
 
-      // 5. FETCH NEW USERS (✅ FIX 2: Restored this logic)
-      let qNewUsers = supabase.from('users').select('*', { count: 'exact', head: true });
-      if (startDateStr) qNewUsers = qNewUsers.gte('created_at', startDateStr);
-      const { count } = await qNewUsers;
-      summary.value.newUsers = count || 0;
+      // 7. NEW USERS (Global stat, skip if machine filtered)
+      if (!selectedMachineId.value) {
+        let qNewUsers = supabase.from('users').select('*', { count: 'exact', head: true });
+        if (startDateStr) qNewUsers = qNewUsers.gte('created_at', startDateStr);
+        const { count } = await qNewUsers;
+        summary.value.newUsers = count || 0;
+      }
       
-      // 6. FETCH COLLECTION LOGS (✅ FIX 3: Restored this logic)
+      // 8. COLLECTION LOGS
       let qCollections = supabase.from('cleaning_records').select('*').order('cleaned_at', { ascending: false });
       if (startDateStr) qCollections = qCollections.gte('cleaned_at', startDateStr);
-      // Optional: Filter by merchant if your cleaning table has merchant_id
       if (auth.merchantId) qCollections = qCollections.eq('merchant_id', auth.merchantId);
+      
+      // ✅ Filter by Machine
+      if (selectedMachineId.value) {
+        qCollections = qCollections.eq('device_no', selectedMachineId.value);
+      }
       
       const { data: cData } = await qCollections;
       if (cData) collectionLogs.value = cData;
@@ -264,6 +303,7 @@ export function useBigDataStats() {
     statsLoading,
     timeFilter,
     dateRange,
+    selectedMachineId,
     totalUsers,
     totalWeight,
     totalLifetimePoints,

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useWithdrawals } from '../composables/useWithdrawals'; 
-import WithdrawalFilters from '../components/WithdrawalFilters.vue'; 
-import { WithdrawalStatus } from '../types'; 
+import WithdrawalFilters from '../components/WithdrawalFilters.vue';  
+import SimpleConfirmModal from '../components/SimpleConfirmModal.vue';
+import StatusModal from '../components/StatusModal.vue';
 import { 
   CheckCircle2, XCircle, RefreshCcw,  ChevronLeft, ChevronRight,
   Clock, CheckSquare, Download
@@ -16,11 +17,13 @@ import ExportSummaryModal from '../components/ExportSummaryModal.vue';
 const { 
   withdrawals, 
   loading, 
-  checkingBalanceId, 
-  balanceResult, 
   fetchWithdrawals, 
-  updateStatus, 
-  checkBalance 
+  updateStatus,
+  prepareSync, 
+  executeSync, 
+  syncConfirm, 
+  syncStatus,
+  isBatchSyncing
 } = useWithdrawals();
 
 // 2. Tab State (New)
@@ -149,6 +152,7 @@ const openDetails = (w: Withdrawal) => {
   showModal.value = true;
 };
 
+
 onMounted(() => fetchWithdrawals());
 </script>
 
@@ -168,6 +172,15 @@ onMounted(() => fetchWithdrawals());
         >
           <Download :size="16" />
           <span>{{ selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : 'Export All' }}</span>
+        </button>
+
+        <button 
+          @click="prepareSync" 
+          :disabled="isBatchSyncing"
+          class="flex items-center space-x-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg hover:bg-blue-100 transition-all disabled:opacity-50"
+        >
+          <RefreshCcw :size="16" :class="{'animate-spin': isBatchSyncing}" />
+          <span>{{ isBatchSyncing ? 'Auditing...' : 'Global Audit' }}</span>
         </button>
 
         <button 
@@ -223,8 +236,7 @@ onMounted(() => fetchWithdrawals());
               <th class="px-6 py-4 border-b">User</th>
               <th class="px-6 py-4 border-b">Phone</th>
               <th class="px-6 py-4 border-b text-right">Amount</th>
-              <th class="px-6 py-4 border-b text-center">Status</th>
-              <th v-if="activeTab === 'PENDING'" class="px-6 py-4 border-b w-48">Balance Check</th> 
+              <th class="px-6 py-4 border-b text-center">Status</th> 
               <th class="px-6 py-4 border-b text-right">Actions</th>
             </tr>
           </thead>
@@ -279,36 +291,12 @@ onMounted(() => fetchWithdrawals());
                 </span>
               </td>
 
-              <td v-if="activeTab === 'PENDING'" class="px-6 py-4">
-                 <div v-if="balanceResult && balanceResult.id === w.id" class="bg-slate-50 border border-slate-200 rounded p-2 text-xs w-40 shadow-sm animate-in fade-in">
-                   <div class="flex justify-between font-bold mb-1 border-b border-slate-200 pb-1">
-                     <span class="text-slate-600">Current:</span>
-                     <span :class="balanceResult.available < w.amount ? 'text-red-600' : 'text-green-600'">
-                       {{ balanceResult.available.toFixed(2) }}
-                     </span>
-                   </div>
-                 </div>
-                 <button v-else @click="checkBalance(w)" :disabled="checkingBalanceId === w.id" class="w-full py-1.5 px-3 bg-white border border-blue-200 text-blue-600 rounded text-xs font-medium hover:bg-blue-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
-                   <RefreshCcw :size="12" :class="{'animate-spin': checkingBalanceId === w.id}" />
-                   {{ checkingBalanceId === w.id ? '...' : 'Verify' }}
-                 </button>
-              </td>
-
               <td class="px-6 py-4 whitespace-nowrap text-right">
                 <div class="flex justify-end gap-2">
                   <button @click="openDetails(w)" class="p-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200" title="View Details">
                     <Eye :size="16" />
                   </button>
-
-                  <template v-if="w.status === 'PENDING'">
-                    <button @click="updateStatus(w.id, WithdrawalStatus.APPROVED)" class="p-1.5 rounded bg-green-50 text-green-600 hover:bg-green-100 border border-green-200" title="Approve">
-                      <CheckCircle2 :size="16" />
-                    </button>
-                    <button @click="updateStatus(w.id, WithdrawalStatus.REJECTED)" class="p-1.5 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200" title="Reject">
-                      <XCircle :size="16" />
-                    </button>
-                  </template>
-                </div>
+                  </div>
               </td>
 
             </tr>
@@ -332,6 +320,7 @@ onMounted(() => fetchWithdrawals());
       :isOpen="showModal" 
       :withdrawal="selectedWithdrawal" 
       @close="showModal = false" 
+      @update-status="(id, status) => updateStatus(id, status)"
     />
 
     <ExportSummaryModal 
@@ -339,6 +328,23 @@ onMounted(() => fetchWithdrawals());
       :data="dataToExport"
       mode="withdrawals" 
       @close="showExportModal = false"
+    />
+
+    <SimpleConfirmModal 
+      :isOpen="syncConfirm.isOpen"
+      :title="syncConfirm.title"
+      :message="syncConfirm.message"
+      :isProcessing="isBatchSyncing"
+      @confirm="executeSync"
+      @close="syncConfirm.isOpen = false"
+    />
+
+    <StatusModal 
+      :isOpen="syncStatus.isOpen"
+      :type="syncStatus.type"
+      :title="syncStatus.title"
+      :message="syncStatus.message"
+      @close="syncStatus.isOpen = false"
     />
   </div>
 </template>
