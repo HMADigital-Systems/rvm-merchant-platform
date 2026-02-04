@@ -1,23 +1,74 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { useBigDataStats } from '../composables/useBigDataStats';
 import BigDataMap from '../components/BigDataMap.vue';
 import BigDataChart from '../components/BigDataChart.vue';
+import { useESGExport } from '../composables/useESGExport';
+import SimpleConfirmModal from '../components/SimpleConfirmModal.vue';
 import { 
   Users, Scale, Server, Activity, 
   Truck, Recycle, CheckCircle2, Coins,
-  RefreshCw // ✅ Imported Refresh Icon
+  RefreshCw, FileText
 } from 'lucide-vue-next';
 
 const { 
   loading, statsLoading, 
   fetchInitialData, fetchFilteredStats,
-  timeFilter, dateRange,
+  timeFilter, dateRange, selectedMachineId,
   totalUsers, totalWeight, totalLifetimePoints, totalMachines, summary,
   machineLocations, onlineCount, offlineCount,
   wasteTrends, withdrawalTrends, recentSubmissions, collectionLogs
   
 } = useBigDataStats();
+
+const { generateReport } = useESGExport();
+
+// ✅ NEW: State for Modal
+const showESGConfirm = ref(false);
+const isGeneratingReport = ref(false);
+
+// 1. Triggered by Button Click -> Opens Modal
+const promptExportESG = () => {
+  showESGConfirm.value = true;
+};
+
+// 2. Triggered by Modal Confirm -> Generates Report
+const executeESGExport = async () => {
+  isGeneratingReport.value = true;
+
+  try {
+    const rangeStr = dateRange.value.start 
+      ? `${dateRange.value.start} to ${dateRange.value.end || 'Now'}` 
+      : 'All Time Records';
+
+    const exportStats = {
+      weight: summary.value.deliveryVolume || totalWeight.value,
+      users: summary.value.newUsers || totalUsers.value,
+      points: summary.value.pointsGiven || totalLifetimePoints.value,
+      machines: selectedMachineId.value ? 1 : totalMachines.value,
+      collections: collectionLogs.value.length
+    };
+
+    const targetName = selectedMachineId.value 
+      ? machineLocations.value.find(m => m.device_no === selectedMachineId.value)?.name || selectedMachineId.value
+      : "All Digital RVM Network";
+
+    await generateReport(exportStats, rangeStr, targetName);
+    
+  } catch (e) {
+    console.error(e);
+  } finally {
+    isGeneratingReport.value = false;
+    showESGConfirm.value = false;
+  }
+};
+
+const filteredMapLocations = computed(() => {
+  if (selectedMachineId.value) {
+    return machineLocations.value.filter(m => m.device_no === selectedMachineId.value);
+  }
+  return machineLocations.value;
+});
 
 // Local state for the refresh button animation
 const isRefreshing = ref(false);
@@ -60,7 +111,16 @@ const formatNum = (n: number) => {
       
       <div class="flex items-center gap-4">
           <button 
-            @click="refreshData" 
+            @click="promptExportESG"
+            class="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 border border-emerald-700 text-white rounded-lg hover:bg-emerald-700 shadow-sm transition-all text-xs font-bold uppercase"
+            title="Download ESG Sustainability Report"
+          >
+            <FileText :size="14" />
+            ESG Report
+          </button>
+
+          <button 
+            @click="refreshData"
             :disabled="isRefreshing"
             class="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-all text-xs font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
             title="Refresh Data"
@@ -70,6 +130,22 @@ const formatNum = (n: number) => {
           </button>
 
           <div class="h-6 w-px bg-slate-200 mx-1"></div>
+
+          <div class="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
+            <span class="text-xs font-bold text-slate-500 px-2 uppercase flex items-center gap-1">
+            <Server :size="12" /> Machine:
+            </span>
+            <select 
+            v-model="selectedMachineId" 
+            @change="fetchFilteredStats" 
+            class="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 py-0 pr-8 cursor-pointer"
+            >
+            <option value="">ALL MACHINES</option>
+            <option v-for="m in machineLocations" :key="m.device_no" :value="m.device_no">
+               {{ m.name || m.device_no }} ({{ m.isOnline ? 'Online' : 'Offline' }})
+            </option>
+            </select>
+         </div>
 
          <div class="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
             <span class="text-xs font-bold text-slate-500 px-2 uppercase">Period:</span>
@@ -171,7 +247,7 @@ const formatNum = (n: number) => {
                     <div class="flex items-center gap-1 text-slate-400 font-bold text-sm"><span class="w-2 h-2 rounded-full bg-slate-300"></span> {{ offlineCount }} Offline</div>
                  </div>
               </div>
-              <BigDataMap :machines="machineLocations" />
+              <BigDataMap :machines="filteredMapLocations" />
            </div>
         </div>
 
@@ -260,7 +336,9 @@ const formatNum = (n: number) => {
                </div>
                </template>
              </BigDataChart>
-             <div v-else class="absolute inset-0 flex items-center justify-center text-slate-300 text-xs uppercase font-bold">No Data for this period</div>
+             <div v-else class="absolute inset-0 flex items-center justify-center text-slate-300 text-xs uppercase font-bold">
+                {{ selectedMachineId ? 'Withdrawal data is not machine-specific' : 'No Data for this period' }}
+                </div>
            </div>
         </div>
 
@@ -299,6 +377,14 @@ const formatNum = (n: number) => {
 
       </div>
     </main>
+    <SimpleConfirmModal
+      :isOpen="showESGConfirm"
+      title="Generate ESG Report"
+      message="This will generate a formal Sustainability Report (Word Document) based on the currently filtered data. The report includes Environmental Impact, Material Breakdown, and Social Governance metrics."
+      :isProcessing="isGeneratingReport"
+      @close="showESGConfirm = false"
+      @confirm="executeESGExport"
+    />
   </div>
 </template>
 

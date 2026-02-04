@@ -18,6 +18,19 @@ interface BalanceCheckResult {
   spent: number;
 }
 
+const syncConfirm = ref({ isOpen: false, title: '', message: '' });
+const syncStatus = ref<{
+    isOpen: boolean;
+    type: 'success' | 'error'; // <--- This fixes the TS Error
+    title: string;
+    message: string;
+  }>({ 
+    isOpen: false, 
+    type: 'success', 
+    title: '', 
+    message: '' 
+  });
+
 export function useWithdrawals() {
   const withdrawals = ref<WithdrawalWithBundle[]>([]);
   const loading = ref(false);
@@ -180,6 +193,133 @@ export function useWithdrawals() {
     }
   };
 
+ // 4. Verify Live Balance (Call Backend)
+  const verifyLiveBalance = async (userId: string, phone: string) => {
+    try {
+        const response = await fetch('/api/sync-balance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, phone })
+        });
+        return await response.json();
+    } catch (e) {
+        console.error(e);
+        return { status: 'ERROR', msg: 'Connection failed' };
+    }
+  };
+
+  // 5. Batch Sync (The Button Logic)
+  const isBatchSyncing = ref(false);
+  
+  // 5. GLOBAL AUDIT: Step 1 - Prepare (Show Modal)
+  const prepareSync = async () => {
+    // Get total count for the modal message
+    const { count, error } = await supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .not('phone', 'is', null);
+
+    if (error) {
+        syncStatus.value = { isOpen: true, type: 'error', title: 'Error', message: 'Database connection failed.' };
+        return;
+    }
+
+    syncConfirm.value = {
+        isOpen: true,
+        title: 'Start Global Audit?',
+        message: `This will scan ALL ${count || 0} registered users for external spending on AutoGCM machines.\n\nThis process may take a minute.`
+    };
+  };
+
+  // 6. GLOBAL AUDIT: Step 2 - Execute (Run Logic)
+  const executeSync = async () => {
+    isBatchSyncing.value = true;
+    
+    let updates = 0;
+    let verified = 0;
+    let processedCount = 0;
+
+    try {
+      console.log("🚀 Starting Bulk Audit...");
+
+      const { data: allUsers } = await supabase
+        .from('users')
+        .select('userId:id, phone, nickname') // Alias id to userId
+        .not('phone', 'is', null);
+
+      if (!allUsers) throw new Error("No users found");
+
+      const totalUsers = allUsers.length;
+      
+      // === NEW: BATCHING LOGIC ===
+      const BATCH_SIZE = 10; // Process 10 users at once
+      
+      for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
+          const batch = allUsers.slice(i, i + BATCH_SIZE);
+          
+          // Update Modal Message
+          syncConfirm.value.message = `Processing Batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(totalUsers/BATCH_SIZE)}...\n(${processedCount}/${totalUsers} users checked)`;
+          
+          try {
+              // Call the new BULK API
+              const response = await fetch('/api/batch-sync-balance', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ users: batch })
+              });
+              
+              const { results } = await response.json();
+
+              // Tally results
+              if (results) {
+                  results.forEach((r: any) => {
+                      if (r.status === 'MATCHED') verified++;
+                      if (r.status === 'RISK_DETECTED') {
+                          updates++;
+                          console.warn(`⚠️ Risk detected for user ${r.userId}`);
+                      }
+                  });
+              }
+
+              processedCount += batch.length;
+
+          } catch (e) {
+              console.error("Batch failed", e);
+          }
+      }
+
+    } catch(e) {
+       console.error("Audit Critical Failure:", e);
+       syncConfirm.value.isOpen = false;
+       syncStatus.value = { isOpen: true, type: 'error', title: 'Audit Failed', message: 'Check console.' };
+       isBatchSyncing.value = false;
+       return;
+    }
+    
+    console.log("🏁 Audit Complete."); // Final Log
+
+    // Cleanup
+    await fetchWithdrawals(); 
+    isBatchSyncing.value = false;
+    syncConfirm.value.isOpen = false; 
+
+    if (updates > 0) {
+        syncStatus.value = { 
+            isOpen: true, 
+            type: 'success', 
+            title: 'Audit Complete', 
+            message: `⚠️ ${updates} accounts updated/adjusted.\n✅ ${verified} accounts verified.` 
+        };
+    } else {
+        syncStatus.value = { 
+            isOpen: true, 
+            type: 'success', 
+            title: 'Perfectly Synced', 
+            message: `✅ All ${verified} users match AutoGCM records.` 
+        };
+    }
+  };
+  
   return {
     withdrawals,
     loading,
@@ -187,6 +327,12 @@ export function useWithdrawals() {
     balanceResult,
     fetchWithdrawals,
     updateStatus,
-    checkBalance
+    checkBalance,
+    verifyLiveBalance,
+    prepareSync, 
+    executeSync,
+    syncConfirm, 
+    syncStatus,
+    isBatchSyncing
   };
 }

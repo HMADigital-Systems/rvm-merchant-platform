@@ -4,10 +4,9 @@ import type { Machine } from "../types";
 // 1. Define Proxy URL
 // If Localhost: Use Live Vercel Backend to avoid CORS issues
 // If Production: Use relative path '/api/proxy'
-const LIVE_BACKEND = 'https://rvm-merchant-platform.app'; 
-const PROXY_URL = import.meta.env.DEV ? `${LIVE_BACKEND}/api/proxy` : '/api/proxy';
+const PROXY_URL = '/api/proxy';
 
-// ✅ FIXED: Changed return type from Promise<any> to Promise<T>
+// FIXED: Changed return type from Promise<any> to Promise<T>
 async function callApi<T>(endpoint: string, method: 'GET' | 'POST' = 'GET', data: any = {}): Promise<T> {
   try {
     const payload = {
