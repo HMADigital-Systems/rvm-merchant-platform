@@ -15,7 +15,7 @@ const emit = defineEmits(['close', 'update-status']);
 
 const hasManualDeduction = ref(false);
 const isAuditing = ref(false);
-const auditResult = ref<any>(null); // Stores the API result from /api/sync-balance
+const auditResult = ref<any>(null); // Stores the API result from /api/batch-sync-balance
 
 // Reset state when modal opens or withdrawal changes
 watch(() => props.withdrawal, () => {
@@ -41,7 +41,7 @@ const sufficientFunds = computed(() => {
 const runAudit = async () => {
     isAuditing.value = true;
     try {
-        const response = await fetch('/api/sync-balance', {
+        const response = await fetch('/api/batch-sync-balance', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
