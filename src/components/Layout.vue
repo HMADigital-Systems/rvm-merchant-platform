@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'; // 1. Import ref
+import { ref } from 'vue'; 
 import { useRoute } from 'vue-router';
 import { watch } from 'vue';
 import { useTabsStore } from '../stores/tabs';
 import { useAuthStore } from '../stores/auth';
-import { RefreshCw } from 'lucide-vue-next'; // 2. Import Refresh Icon
+import { RefreshCw, HelpCircle } from 'lucide-vue-next'; 
 import Sidebar from './Sidebar.vue';
 import TabsBar from './TabsBar.vue';
 
@@ -12,15 +12,13 @@ const route = useRoute();
 const tabsStore = useTabsStore();
 const auth = useAuthStore();
 
-// 3. Refresh Logic State
+// Refresh Logic State
 const refreshKey = ref(0);
 const isRefreshing = ref(false);
 
 const handleRefresh = () => {
   isRefreshing.value = true;
-  refreshKey.value += 1; // Increment key to force re-render
-  
-  // Stop spinning animation after 1 second
+  refreshKey.value += 1; 
   setTimeout(() => {
     isRefreshing.value = false;
   }, 1000);
@@ -65,13 +63,28 @@ const getPageTitle = () => {
           </button>
         </div>
         
-        <div class="flex items-center space-x-4">
+        <div class="flex items-center gap-4">
+          
+          <router-link 
+            to="/admin/docs" 
+            target="_blank"
+            class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all relative group"
+            title="Admin Operations Manual"
+          >
+            <HelpCircle :size="20" />
+            <span class="absolute top-full right-0 mt-2 w-max px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+              Admin SOP
+            </span>
+          </router-link>
+
+          <div class="h-6 w-px bg-gray-200 mx-2"></div>
+
           <div class="text-right hidden sm:block">
             <div class="text-sm font-medium text-gray-900">
-                {{ auth.user?.email || 'Administrator' }}
+              {{ auth.user?.email || 'Administrator' }}
             </div>
             <div class="text-xs text-gray-500 capitalize">
-                {{ auth.role?.replace('_', ' ').toLowerCase() || 'User' }}
+              {{ auth.role?.replace('_', ' ').toLowerCase() || 'User' }}
             </div>
           </div>
           
@@ -82,7 +95,7 @@ const getPageTitle = () => {
       </header>
       
       <div class="shrink-0 z-10 w-full bg-gray-100">
-         <TabsBar />
+          <TabsBar />
       </div>
 
       <div class="flex-1 overflow-y-auto p-6 scroll-smooth">
