@@ -12,7 +12,7 @@ async function fetchAutoGCMBalance(phone: string, merchantNo: string, secret: st
     try {
         const res = await axios.post(API_BASE + '/api/open/v1/user/account/sync', { phone }, {
             headers: { "merchant-no": merchantNo, "timestamp": timestamp, "sign": sign },
-            timeout: 5000 // 5s timeout to prevent hanging
+            timeout: 5000
         });
         return { phone, balance: Number(res?.data?.data?.integral || 0), error: null };
     } catch (e) { 
@@ -30,15 +30,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
     
-    // Expecting an array of users: [{ userId: '...', phone: '...' }, ...]
-    const { users } = req.body; 
+    // Support both array (Batch) and single object (Single Sync)
+    let users = req.body.users;
+    if (!users && req.body.userId) {
+        users = [{ userId: req.body.userId, phone: req.body.phone }];
+    }
+
     if (!users || !Array.isArray(users)) return res.status(400).json({ error: "Invalid payload" });
 
     const userIds = users.map(u => u.userId);
     const results = [];
 
     try {
-        // 1. PARALLEL: Fetch AutoGCM Balances for all 10 users at once
+        // 1. EXTERNAL: Fetch AutoGCM Balances
         const merchantNo = process.env.VITE_MERCHANT_NO!;
         const secret = process.env.VITE_API_SECRET!;
         
@@ -46,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const vendorResults = await Promise.all(vendorPromises);
         const vendorMap = new Map(vendorResults.map(i => [i.phone, i]));
 
-        // 2. BULK FETCH: Get Supabase Data for all 10 users in ONE query (Much faster)
+        // 2. INTERNAL: Bulk Fetch Supabase Data
         const { data: reviews } = await supabase.from('submission_reviews')
             .select('user_id, calculated_value')
             .in('user_id', userIds)
@@ -57,6 +61,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .in('user_id', userIds)
             .eq('transaction_type', 'EXTERNAL_SPEND');
 
+        // We count EXTERNAL_SYNC withdrawals to ensure our math is correct
+        const { data: externalWithdrawals } = await supabase.from('withdrawals')
+            .select('user_id, amount')
+            .in('user_id', userIds)
+            .eq('account_number', 'EXTERNAL_SYNC') 
+            .neq('status', 'REJECTED');
+
         const { data: wallets } = await supabase.from('merchant_wallets')
             .select('id, user_id, merchant_id, current_balance')
             .in('user_id', userIds);
@@ -64,43 +75,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 3. PROCESS EACH USER
         for (const user of users) {
             const vendorData = vendorMap.get(user.phone);
-            if (vendorData?.error) continue; // Skip failed API calls
+            if (vendorData?.error) {
+                results.push({ userId: user.userId, status: 'ERROR', msg: 'AutoGCM API Failed' });
+                continue;
+            }
 
             const vendorBalance = vendorData!.balance;
 
-            // Calculate Local Mirror Balance
+            // --- CALCULATE MIRROR BALANCE ---
             const userReviews = reviews?.filter(r => r.user_id === user.userId) || [];
             const userTxns = externalTxns?.filter(t => t.user_id === user.userId) || [];
+            const userWithdrawals = externalWithdrawals?.filter(w => w.user_id === user.userId) || [];
             
             const totalEarned = userReviews.reduce((sum, r) => sum + Number(r.calculated_value), 0);
-            const totalExternalSpent = userTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+            const oldSpent = userTxns.reduce((sum, t) => sum + Number(t.amount), 0);
+            const newSpent = userWithdrawals.reduce((sum, w) => sum + Number(w.amount), 0);
             
-            const comparisonBalance = Number((totalEarned + totalExternalSpent).toFixed(2));
+            const comparisonBalance = Number((totalEarned + oldSpent - newSpent).toFixed(2));
             const diff = Number((vendorBalance - comparisonBalance).toFixed(2));
 
-            // Risk Detection Logic
+            // --- AUTOMATIC DEDUCTION LOGIC ---
             if (diff < -0.5) {
-                // RISK FOUND
+                // User spent points externally.
                 const wallet = wallets?.find(w => w.user_id === user.userId);
+                
                 if (wallet) {
-                    const adjustment = diff; // Negative number
-                    const newLocalBalance = Number((wallet.current_balance + adjustment).toFixed(2));
+                    const adjustment = Math.abs(diff);
 
-                    // Perform Deduction
-                    await supabase.from('wallet_transactions').insert({
-                        user_id: user.userId,
-                        merchant_id: wallet.merchant_id,
-                        amount: adjustment,
-                        balance_after: newLocalBalance,
-                        transaction_type: 'EXTERNAL_SPEND',
-                        description: `Auto-Sync: Detected ${Math.abs(adjustment)} pts spent externally`
-                    });
-
-                    await supabase.from('merchant_wallets')
-                        .update({ current_balance: newLocalBalance })
+                    // A. Update Wallet IMMEDIATELY (Deduct Points)
+                    const { error: walletError } = await supabase.from('merchant_wallets')
+                        .update({ current_balance: wallet.current_balance - adjustment })
                         .eq('id', wallet.id);
-                    
-                    results.push({ userId: user.userId, status: 'RISK_DETECTED' });
+
+                    if (!walletError) {
+                        // B. Insert History Record
+                        // ✅ FIX: Removed 'admin_note' which caused the crash
+                        await supabase.from('withdrawals').insert({
+                            user_id: user.userId,
+                            merchant_id: wallet.merchant_id,
+                            amount: adjustment,
+                            status: 'EXTERNAL_SYNC',
+                            bank_name: 'AutoGCM App',
+                            account_number: 'EXTERNAL_SYNC',
+                            account_holder_name: 'External Spending'
+                        });
+                        
+                        results.push({ userId: user.userId, status: 'RISK_DETECTED', adjustment, msg: 'Auto-deducted' });
+                    } else {
+                        results.push({ userId: user.userId, status: 'DB_ERROR' });
+                    }
+                } else {
+                     results.push({ userId: user.userId, status: 'MISSING_WALLET' });
                 }
             } else if (diff > 0.5) {
                 results.push({ userId: user.userId, status: 'MISSING_RECORDS' });
