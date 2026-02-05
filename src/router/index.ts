@@ -36,6 +36,12 @@ const router = createRouter({
       component: BigDataPlatform,
       meta: { requiresAuth: true, title: 'Big Data Platform' }
     },
+    {
+      path: '/admin/docs',
+      name: 'AdminDocs',
+      component: () => import('../views/AdminDocs.vue'),
+      meta: { requiresAuth: true, title: 'Operations Manual' }
+    },
 
     // --------------------------------------------------------
     // 2. PROTECTED ROUTES (Wrapped in Layout)
