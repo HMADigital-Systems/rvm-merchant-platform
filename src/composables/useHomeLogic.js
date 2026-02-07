@@ -153,9 +153,16 @@ export function useHomeLogic() {
         const configs = configRes?.data || [];
         const hasValidConfig = (configRes && configRes.code === 200 && configs.length > 0);
 
+        const isManualOffline = rvm.is_manual_offline === true;
+
         let isOnline = hasValidConfig; 
         let computedStatus = 0; 
-        if (hasValidConfig) {
+        
+        if (isManualOffline) {
+            isOnline = false; // Force it offline internally
+            computedStatus = 99; // Custom code for manual maintenance
+        }
+        else if (hasValidConfig) {
              const hasFault = configs.some(c => c.status === 2 || c.status === 3);
              if (hasFault) computedStatus = 3; 
         }
@@ -168,6 +175,7 @@ export function useHomeLogic() {
             device_no: deviceNo,
             configs, 
             isRealOnline: isOnline, 
+            isManualOffline,
             computedStatus,
             calculatedDistance: distance,
             finalLat: lat,
@@ -198,7 +206,11 @@ export function useHomeLogic() {
         }
 
         let machineStatusText = "Offline";
-        if (isOnline) {
+        
+        if (rvm.isManualOffline) {
+            machineStatusText = "Maintenance";
+        }
+        else if (isOnline) {
             if (rvm.computedStatus == 3 || rvm.computedStatus == 2) machineStatusText = "Maintenance";
             else if (compartments.length > 0 && compartments.every(c => c.isFull)) machineStatusText = "Bin Full";
             else machineStatusText = "Online";
