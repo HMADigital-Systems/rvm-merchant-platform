@@ -61,6 +61,7 @@ const getStatusBadge = (code: number) => {
               <th class="px-6 py-4">Device ID</th>
               <th class="px-6 py-4">Bin Level (%)</th>
               <th class="px-6 py-4">Current Weight</th> 
+              <th class="px-6 py-4 text-center">Force Offline</th>
               <th class="px-6 py-4 text-right">Support</th> 
             </tr>
           </thead>
@@ -120,6 +121,16 @@ const getStatusBadge = (code: number) => {
                             {{ bin.weight }} kg
                         </div>
                     </div>
+                </td>
+
+                <td class="px-6 py-5 align-top text-center">
+                    <button 
+                       @click="machineStore.toggleOfflineMode(m.id, m.isManualOffline)"
+                       :class="m.isManualOffline ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'"
+                       class="px-3 py-1.5 rounded-md text-xs font-bold border transition-all shadow-sm active:scale-95"
+                    >
+                       {{ m.isManualOffline ? 'MAINTENANCE' : 'AUTO MODE' }}
+                    </button>
                 </td>
 
                 <td class="px-6 py-5 align-top text-right">

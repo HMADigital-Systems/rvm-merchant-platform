@@ -105,6 +105,7 @@ export interface Machine {
   // Status
   is_active: boolean;
   zone?: string;
+  is_manual_offline: boolean;
 
   // NEW: Rates are now here (Source of Truth)
   config_bin_1: string;
