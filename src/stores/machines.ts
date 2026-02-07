@@ -5,6 +5,7 @@ import { getMachineConfig } from '../services/autogcm';
 import { useAuthStore } from './auth';
 
 export interface DashboardMachine {
+  id: number;
   deviceNo: string;
   name: string;
   address: string;
@@ -12,6 +13,7 @@ export interface DashboardMachine {
   maintenanceContact: string;
   googleMapsUrl: string;
   isOnline: boolean;
+  isManualOffline: boolean;
   statusText: string;
   statusCode: number;
   compartments: any[];
@@ -172,11 +174,19 @@ export const useMachineStore = defineStore('machines', () => {
         }
 
         // Status
+        const isManualOffline = dbMachine.is_manual_offline === true; // Must exist in DB
+        
         const hasFault = apiConfigs.some((c: any) => c.status === 2 || c.status === 3);
         const hasActivity = apiConfigs.some((c: any) => c.status === 1);
         const anyBinFull = compartments.some(c => c.isFull);
 
-        if (!isOnline) { statusCode = 0; statusText = "Offline"; }
+        // Priority Logic
+        if (isManualOffline) {
+            statusCode = 3; // Use maintenance color (Yellow) or Offline (Grey)
+            statusText = "Maintenance (Manual)";
+            isOnline = false; // Force offline for UI logic
+        }
+        else if (!isOnline) { statusCode = 0; statusText = "Offline"; }
         else if (anyBinFull) { statusCode = 4; statusText = "Bin Full"; } 
         else if (hasFault) { statusCode = 3; statusText = "Maintenance"; }
         else if (hasActivity) { statusCode = 1; statusText = "In Use"; }
@@ -200,6 +210,7 @@ export const useMachineStore = defineStore('machines', () => {
         }
 
         tempMachines.push({
+          id: dbMachine.id,
           deviceNo: dbMachine.device_no,
           name: dbMachine.name,
           address: dbMachine.address,
@@ -207,6 +218,7 @@ export const useMachineStore = defineStore('machines', () => {
           maintenanceContact: dbMachine.maintenance_contact || 'Unassigned',
           googleMapsUrl: mapsUrl,
           isOnline,
+          isManualOffline,
           statusCode,
           statusText,
           compartments
@@ -232,5 +244,29 @@ export const useMachineStore = defineStore('machines', () => {
       lastUpdated.value = 0;
   };
 
-  return { machines, loading, fetchMachines, lastUpdated, reset, lastFetchedMerchantId };
+  // New Action: Toggle Offline Mode
+  const toggleOfflineMode = async (machineId: number, currentStatus: boolean) => {
+      const newStatus = !currentStatus;
+      
+      // 1. Optimistic Update (Immediate UI feedback)
+      const target = machines.value.find(m => m.id === machineId);
+      if (target) target.isManualOffline = newStatus;
+
+      // 2. DB Update
+      const { error } = await supabase
+          .from('machines')
+          .update({ is_manual_offline: newStatus })
+          .eq('id', machineId);
+
+      if (error) {
+          console.error("Toggle Failed:", error);
+          if (target) target.isManualOffline = currentStatus; // Revert
+          return;
+      }
+      
+      // 3. Refresh to update colors/text correctly
+      await fetchMachines(true);
+  };
+
+  return { machines, loading, fetchMachines, lastUpdated, reset, lastFetchedMerchantId, toggleOfflineMode };
 });
