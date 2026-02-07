@@ -210,14 +210,24 @@ const getBinTheme = (rawName) => {
 
 onMounted(async () => {
   try {
+    // 1. FETCH DB DATA (Now includes 'is_manual_offline')
     const { data: dbMachine } = await supabase
       .from('machines')
-      .select('name, address')
+      .select('name, address, is_manual_offline') 
       .eq('device_no', deviceNo)
       .maybeSingle();
       
     if (dbMachine) address.value = dbMachine.address || dbMachine.name;
 
+    // 2. CHECK IF MANUALLY DISABLED
+    if (dbMachine?.is_manual_offline) {
+        console.warn("⛔ Machine is manually set to OFFLINE via Admin Panel");
+        isOnline.value = false;
+        isLoading.value = false;
+        return; // Stop here, do not fetch API
+    }
+
+    // 3. IF NOT DISABLED, CHECK LIVE API STATUS
     const res = await getMachineConfig(deviceNo);
     
     if (res.code === 200 && res.data && res.data.length > 0) {
