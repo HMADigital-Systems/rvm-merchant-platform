@@ -77,6 +77,8 @@ export function useSubmissionReviews() {
         // Wait for auth to be loaded if still loading or role not set
         if (auth.loading || !auth.role) {
             console.log("SubmissionReviews: Waiting for auth/role to be ready... loading:", auth.loading, "role:", auth.role);
+            // Don't return - try again after a short delay
+            setTimeout(() => fetchReviews(), 500);
             return;
         }
         

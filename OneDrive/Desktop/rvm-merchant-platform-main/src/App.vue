@@ -5,11 +5,9 @@ import { useAuthStore } from './stores/auth';
 
 const auth = useAuthStore();
 
-// Restore session on refresh
+// Restore session on refresh - always initialize to ensure role is properly set
 onMounted(() => {
-  if (!auth.user) {
-    auth.initializeAuth();
-  }
+  auth.initializeAuth();
 });
 </script>
 

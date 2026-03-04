@@ -20,10 +20,12 @@ export const useAuthStore = defineStore('auth', () => {
         return; 
     }
 
+    console.log("🚀 initializeAuth: Starting auth initialization...");
     loading.value = true;
     const { data } = await supabase.auth.getSession();
     
     if (data.session) {
+      console.log("✅ initializeAuth: Session found for:", data.session.user.email);
       const email = data.session.user.email;
       if (email) {
         // We are already logged in, so we can safely Read the profile
@@ -31,12 +33,17 @@ export const useAuthStore = defineStore('auth', () => {
         if (success) {
             session.value = data.session;
             user.value = data.session.user;
+            console.log("✅ initializeAuth: Auth initialization complete. Role:", role.value);
         } else {
+            console.error("❌ initializeAuth: Profile fetch failed, logging out");
             await logout(); // Profile missing or deleted
         }
       } else {
+        console.warn("⚠️ initializeAuth: No email in session, logging out");
         await logout();
       }
+    } else {
+      console.log("ℹ️ initializeAuth: No session found, user is not logged in");
     }
     loading.value = false;
   }
@@ -58,11 +65,17 @@ export const useAuthStore = defineStore('auth', () => {
   // 3. Helper: Fetch Profile (REQUIRES AUTH)
   // Only call this AFTER logging in
   async function fetchAdminProfile(email: string) {
-    const { data } = await supabase
+    console.log("🔍 fetchAdminProfile: Looking up profile for email:", email);
+    const { data, error } = await supabase
       .from('app_admins')
       .select('role, merchant_id')
       .eq('email', email)
       .single();
+    
+    if (error) {
+      console.error("❌ fetchAdminProfile: Error fetching profile:", error);
+      return false;
+    }
     
     if (data) {
         role.value = data.role;
@@ -71,6 +84,7 @@ export const useAuthStore = defineStore('auth', () => {
         console.log("Auth Store: Role is now set to:", role.value);
         return true;
     }
+    console.warn("⚠️ fetchAdminProfile: No data returned for email:", email);
     return false;
   }
 
