@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { getMachineConfig } from '../services/autogcm';
 import { useAuthStore } from './auth';
+import { useViewerAssignments } from '../composables/useViewerAssignments';
 
 export interface DashboardMachine {
   id: number;
@@ -28,6 +29,13 @@ export const useMachineStore = defineStore('machines', () => {
   // 🔥 NEW: Track who owns the current data
   const lastFetchedMerchantId = ref<string | null>(null);
   
+  // 🔥 NEW: Viewer assignments state
+  const viewerAssignments = ref<{ machine_id: number; machines?: any }[]>([]);
+  const viewerHasAssignments = ref(false);
+  
+  // Create viewer assignments composable instance
+  const viewerAssignmentsComposable = useViewerAssignments();
+  
   const CACHE_DURATION = 5 * 60 * 1000;
 
   // Helpers
@@ -52,6 +60,7 @@ export const useMachineStore = defineStore('machines', () => {
   // --- ACTION: Fetch Machines ---
   const fetchMachines = async (forceRefresh = false) => {
     const auth = useAuthStore();
+    const { fetchMyAssignments, getAssignedMachineIds, assignments } = viewerAssignmentsComposable;
     
     // Wait for auth to be loaded if still loading or role not set
     if (auth.loading || !auth.role) {
@@ -62,14 +71,30 @@ export const useMachineStore = defineStore('machines', () => {
     // 1. IDENTIFY ROLE
     const isPlatformOwner = auth.role === 'SUPER_ADMIN' && !auth.merchantId;
     const isViewer = auth.role === 'VIEWER';
+    const isCollector = auth.role === 'COLLECTOR';
+    const isAgent = auth.role === 'AGENT';
+    const isFieldStaff = isViewer || isCollector || isAgent;
     
-    console.log("MachineStore: Fetching with role:", auth.role, "isPlatformOwner:", isPlatformOwner, "isViewer:", isViewer, "merchantId:", auth.merchantId);
+    console.log("MachineStore: Fetching with role:", auth.role, "isPlatformOwner:", isPlatformOwner, "isViewer:", isViewer, "isCollector:", isCollector, "isAgent:", isAgent, "merchantId:", auth.merchantId);
+    
+    // 🔥 NEW: For VIEWERs, COLLECTORs, and AGENTs, fetch their assigned machines first
+    let viewerAssignedMachineIds: number[] | null = null;
+    if (isFieldStaff) {
+        await fetchMyAssignments();
+        viewerAssignedMachineIds = getAssignedMachineIds();
+        viewerAssignments.value = assignments.value;
+        viewerHasAssignments.value = viewerAssignedMachineIds.length > 0;
+        console.log("MachineStore: Field staff assigned machine IDs:", viewerAssignedMachineIds);
+    } else {
+        viewerAssignments.value = [];
+        viewerHasAssignments.value = false;
+    }
     
     // 2. SECURITY WIPE
     // If not logged in at all, or if strictly a merchant without an ID, clear data.
-    // VIEWER role can see all data - check this first
-    if (isViewer) {
-        // VIEWER can access - no wipe needed
+    // VIEWER, COLLECTOR, AGENT roles can see assigned data - check this first
+    if (isFieldStaff) {
+        // Field staff can access - but filtered by assignments
     } else if (!auth.merchantId && !isPlatformOwner) {
       console.warn("MachineStore: No Access Context. Clearing data.");
       machines.value = [];
@@ -101,10 +126,19 @@ export const useMachineStore = defineStore('machines', () => {
         .from('machines')
         .select('*'); // We fetch config_bin_1/2 directly from machines now
 
-      // 🔥 CRITICAL FIX: Only apply merchant filter if NOT Platform Owner and NOT Viewer
-      // VIEWER can see ALL machines
-      if (isViewer) {
-          // No filter - VIEWER sees all machines
+      // 🔥 CRITICAL FIX: Only apply merchant filter if NOT Platform Owner and NOT Field Staff
+      // VIEWER, COLLECTOR, AGENT see only their assigned machines (if any), or all if none assigned
+      if (isFieldStaff) {
+          // If field staff has specific machine assignments, filter by those
+          if (viewerAssignedMachineIds && viewerAssignedMachineIds.length > 0) {
+              query = query.in('id', viewerAssignedMachineIds);
+              console.log("MachineStore: FIELD STAFF filtered to assigned machines:", viewerAssignedMachineIds.length);
+          } else if (auth.merchantId) {
+              // Fall back to merchant filter if no specific assignments
+              query = query.eq('merchant_id', auth.merchantId);
+              console.log("MachineStore: FIELD STAFF using merchant filter:", auth.merchantId);
+          }
+          // If no assignments AND no merchant, field staff sees nothing (handled by security wipe)
       } else if (!isPlatformOwner && auth.merchantId) {
          query = query.eq('merchant_id', auth.merchantId);
       }
@@ -282,5 +316,15 @@ export const useMachineStore = defineStore('machines', () => {
       await fetchMachines(true);
   };
 
-  return { machines, loading, fetchMachines, lastUpdated, reset, lastFetchedMerchantId, toggleOfflineMode };
+  return { 
+    machines, 
+    loading, 
+    fetchMachines, 
+    lastUpdated, 
+    reset, 
+    lastFetchedMerchantId, 
+    toggleOfflineMode,
+    viewerAssignments,
+    viewerHasAssignments
+  };
 });

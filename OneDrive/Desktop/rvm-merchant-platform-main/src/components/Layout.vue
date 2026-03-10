@@ -1,16 +1,51 @@
 <script setup lang="ts">
-import { ref } from 'vue'; 
+import { ref, computed, onMounted } from 'vue'; 
 import { useRoute } from 'vue-router';
 import { watch } from 'vue';
 import { useTabsStore } from '../stores/tabs';
 import { useAuthStore } from '../stores/auth';
-import { RefreshCw, HelpCircle } from 'lucide-vue-next'; 
+import { useMachineStore } from '../stores/machines';
+import { RefreshCw, HelpCircle, Monitor, Info, Truck, User } from 'lucide-vue-next'; 
 import Sidebar from './Sidebar.vue';
 import TabsBar from './TabsBar.vue';
 
 const route = useRoute();
 const tabsStore = useTabsStore();
 const auth = useAuthStore();
+const machineStore = useMachineStore();
+
+// Check if current user is a VIEWER
+const isViewer = computed(() => auth.role === 'VIEWER');
+
+// Check if current user is a COLLECTOR
+const isCollector = computed(() => auth.role === 'COLLECTOR');
+
+// Check if current user is an AGENT
+const isAgent = computed(() => auth.role === 'AGENT');
+
+// Get viewer assignment info
+const viewerAssignmentSummary = computed(() => {
+  if (!isViewer.value) return null;
+  
+  const assignments = machineStore.viewerAssignments;
+  if (!assignments || assignments.length === 0) return null;
+  
+  const machineNames = assignments
+    .filter(a => a.machines)
+    .map(a => a.machines.name)
+    .slice(0, 3);
+  
+  const totalCount = assignments.length;
+  const displayText = machineNames.length > 0 
+    ? `${machineNames.join(', ')}${totalCount > 3 ? ` +${totalCount - 3} more` : ''}`
+    : `${totalCount} machine${totalCount > 1 ? 's' : ''}`;
+  
+  return {
+    count: totalCount,
+    text: displayText,
+    machines: assignments.filter(a => a.machines)
+  };
+});
 
 // Refresh Logic State
 const refreshKey = ref(0);
@@ -36,6 +71,32 @@ watch(
 const getPageTitle = () => {
   return (route.meta?.title as string) || route.name?.toString() || 'Dashboard';
 };
+
+// 🔥 Fetch viewer assignments on mount
+onMounted(async () => {
+  // Wait for auth to be ready
+  const checkAuth = () => {
+    return new Promise<void>((resolve) => {
+      if (!auth.loading && auth.role) {
+        resolve();
+      } else {
+        const interval = setInterval(() => {
+          if (!auth.loading && auth.role) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+      }
+    });
+  };
+  
+  await checkAuth();
+  
+  // Fetch machines (which will also load viewer assignments)
+  if (auth.role === 'VIEWER') {
+    await machineStore.fetchMachines();
+  }
+});
 </script>
 
 <template>
@@ -96,6 +157,69 @@ const getPageTitle = () => {
       
       <div class="shrink-0 z-10 w-full bg-gray-100">
           <TabsBar />
+      </div>
+
+      <!-- 🔥 VIEWER Assignment Notification Banner -->
+      <div v-if="isViewer && viewerAssignmentSummary" class="shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100 px-6 py-3">
+        <div class="max-w-7xl mx-auto flex items-center gap-3">
+          <div class="p-2 bg-blue-100 rounded-lg">
+            <Monitor class="text-blue-600" :size="18" />
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-blue-900">
+              You are assigned to monitor {{ viewerAssignmentSummary.count }} machine{{ viewerAssignmentSummary.count > 1 ? 's' : '' }}
+            </div>
+            <div class="text-xs text-blue-700">
+              {{ viewerAssignmentSummary.text }}
+            </div>
+          </div>
+          <div class="flex items-center gap-1 text-xs text-blue-500 bg-blue-100 px-2 py-1 rounded-full">
+            <Info :size="12" />
+            <span>Assigned View</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🔥 COLLECTOR Notification Banner -->
+      <div v-if="isCollector" class="shrink-0 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-100 px-6 py-3">
+        <div class="max-w-7xl mx-auto flex items-center gap-3">
+          <div class="p-2 bg-green-100 rounded-lg">
+            <Truck class="text-green-600" :size="18" />
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-green-900">
+              Collector Mode Active
+            </div>
+            <div class="text-xs text-green-700">
+              View your collection dashboard and manage recycling submissions
+            </div>
+          </div>
+          <div class="flex items-center gap-1 text-xs text-green-500 bg-green-100 px-2 py-1 rounded-full">
+            <Info :size="12" />
+            <span>Collection View</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🔥 AGENT Notification Banner -->
+      <div v-if="isAgent" class="shrink-0 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 px-6 py-3">
+        <div class="max-w-7xl mx-auto flex items-center gap-3">
+          <div class="p-2 bg-orange-100 rounded-lg">
+            <User class="text-orange-600" :size="18" />
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-orange-900">
+              Agent Mode Active - Idaman Bukit Jelutong
+            </div>
+            <div class="text-xs text-orange-700">
+              Managing operations for Idaman Bukit Jelutong location
+            </div>
+          </div>
+          <div class="flex items-center gap-1 text-xs text-orange-500 bg-orange-100 px-2 py-1 rounded-full">
+            <Info :size="12" />
+            <span>Agent View</span>
+          </div>
+        </div>
       </div>
 
       <div class="flex-1 overflow-y-auto p-6 scroll-smooth">

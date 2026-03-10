@@ -118,6 +118,22 @@ export interface Machine {
   merchant?: Merchant; 
 }
 
+export interface ViewerMachineAssignment {
+  id: string;
+  admin_id: string;
+  machine_id: number;
+  assigned_at: string;
+  assigned_by: string | null;
+  
+  // Joined Data
+  machines?: {
+    device_no: string;
+    name: string;
+    address: string;
+    zone: string;
+  };
+}
+
 export interface SubmissionReview {
   id: string;
   vendor_record_id: string;
@@ -160,7 +176,22 @@ export interface SubmissionReview {
 }
 
 // ==========================================
-// 4. API RESPONSE INTERFACES (Keep as is)
+// 5. ADMIN ROLES
+// ==========================================
+
+export type AdminRole = 'SUPER_ADMIN' | 'ADMIN' | 'EDITOR' | 'VIEWER' | 'COLLECTOR' | 'AGENT';
+
+export const ADMIN_ROLES: { value: AdminRole; label: string; description: string }[] = [
+  { value: 'VIEWER', label: 'Viewer', description: 'Read Only access' },
+  { value: 'COLLECTOR', label: 'Collector', description: 'Can manage collections and submissions' },
+  { value: 'AGENT', label: 'Agent', description: 'Field agent with limited permissions' },
+  { value: 'EDITOR', label: 'Editor', description: 'Can approve submissions' },
+  { value: 'ADMIN', label: 'Admin', description: 'Merchant admin access' },
+  { value: 'SUPER_ADMIN', label: 'Super Admin', description: 'Full platform access' },
+];
+
+// ==========================================
+// 6. API RESPONSE INTERFACES
 // ==========================================
 
 export interface ApiUserSyncResponse {
@@ -199,5 +230,36 @@ export interface ApiPutResponse {
     total: number;
     pageNum: number;
     pageSize: number;
+  };
+}
+
+// ==========================================
+// 7. MACHINE REPORTS (Critical Alerts)
+// ==========================================
+
+export type ReportType = 'MAINTENANCE' | 'BIN_FULL' | 'PRINTER_JAM' | 'NETWORK_ISSUE' | 'OTHER';
+export type ReportSeverity = 'critical' | 'warning' | 'info';
+export type ReportStatus = 'PENDING' | 'ACKNOWLEDGED' | 'RESOLVED' | 'DISMISSED';
+
+export interface MachineReport {
+  id: string;
+  machine_id: number;
+  device_no: string;
+  merchant_id: string | null;
+  report_type: ReportType;
+  severity: ReportSeverity;
+  description: string;
+  status: ReportStatus;
+  reported_by_admin_id: string | null;
+  reported_by_name: string | null;
+  assigned_to_admin_id: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  
+  // Joined Data
+  machines?: {
+    name: string;
+    address: string;
   };
 }

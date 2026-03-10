@@ -63,9 +63,9 @@ export function useWithdrawals() {
         `)
         .order('created_at', { ascending: false });
 
-      // 🔥 SaaS Filter - VIEWER role can see ALL data
-      // Check VIEWER first before checking merchantId
-      if (auth.role === 'VIEWER') {
+      // 🔥 SaaS Filter - VIEWER, COLLECTOR, AGENT roles can see ALL data
+      // Check roles first before checking merchantId
+      if (auth.role === 'VIEWER' || auth.role === 'COLLECTOR' || auth.role === 'AGENT') {
           // No filter - see all data
       } else if (auth.merchantId) {
           query = query.eq('merchant_id', auth.merchantId);

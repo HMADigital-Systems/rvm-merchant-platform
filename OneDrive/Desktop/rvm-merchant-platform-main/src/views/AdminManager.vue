@@ -2,7 +2,8 @@
 import { ref, onMounted, computed } from 'vue';
 import { Trash2, UserPlus, Shield } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
-import { useAdmins } from '../composables/useAdmins'; // Import the new composable
+import { useAdmins } from '../composables/useAdmins';
+import { ADMIN_ROLES, type AdminRole } from '../types';
 
 const auth = useAuthStore();
 const { admins, loading, fetchAdmins, addAdmin, removeAdmin } = useAdmins();
@@ -10,9 +11,12 @@ const { admins, loading, fetchAdmins, addAdmin, removeAdmin } = useAdmins();
 // Local UI State
 const showAddModal = ref(false);
 const newEmail = ref('');
-const newRole = ref('VIEWER');
+const newRole = ref<AdminRole>('VIEWER');
 
 const isPlatformOwner = computed(() => auth.role === 'SUPER_ADMIN' && !auth.merchantId);
+const isViewer = computed(() => auth.role === 'VIEWER');
+const isRestricted = computed(() => ['VIEWER', 'COLLECTOR', 'AGENT'].includes(auth.role || ''));
+const canAddAdmin = computed(() => !isRestricted.value);
 
 const handleAddAdmin = async () => {
     const res = await addAdmin(newEmail.value, newRole.value);
@@ -29,6 +33,23 @@ const handleRemoveAdmin = async (id: string) => {
     const res = await removeAdmin(id);
     if (!res.success) {
         alert("Error removing admin: " + res.message);
+    }
+};
+
+// Helper function for role badge colors
+const getRoleBadgeClass = (role: string) => {
+    switch (role) {
+        case 'SUPER_ADMIN':
+            return 'bg-purple-100 text-purple-700';
+        case 'EDITOR':
+            return 'bg-blue-100 text-blue-700';
+        case 'COLLECTOR':
+            return 'bg-green-100 text-green-700';
+        case 'AGENT':
+            return 'bg-orange-100 text-orange-700';
+        case 'VIEWER':
+        default:
+            return 'bg-gray-100 text-gray-700';
     }
 };
 
@@ -63,6 +84,7 @@ onMounted(() => {
          </p>
       </div>
       <button 
+        v-if="canAddAdmin"
         @click="showAddModal = !showAddModal"
         class="flex items-center space-x-2 text-sm text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg shadow-sm transition-all"
       >
@@ -71,7 +93,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <div v-if="showAddModal" class="bg-blue-50 p-6 rounded-xl border border-blue-100 animate-fade-in-down">
+    <div v-if="showAddModal && canAddAdmin" class="bg-blue-50 p-6 rounded-xl border border-blue-100 animate-fade-in-down">
       <h3 class="text-sm font-bold text-blue-800 mb-2">Whitelist New Administrator</h3>
       <p class="text-xs text-blue-600 mb-4">
         1. Add their email here. <br>
@@ -86,9 +108,9 @@ onMounted(() => {
         <div class="w-48">
           <label class="block text-xs font-medium text-blue-800 mb-1">Role</label>
           <select v-model="newRole" class="w-full px-3 py-2 border border-blue-200 rounded-md bg-white">
-            <option value="VIEWER">Viewer (Read Only)</option>
-            <option value="EDITOR">Editor (Can Approve)</option>
-            <option value="SUPER_ADMIN">Super Admin</option>
+            <option v-for="role in ADMIN_ROLES" :key="role.value" :value="role.value">
+              {{ role.label }}
+            </option>
           </select>
         </div>
         <button @click="handleAddAdmin" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium">
@@ -106,7 +128,7 @@ onMounted(() => {
             <th class="px-6 py-4">Admin User</th>
             <th class="px-6 py-4">Role</th>
             <th class="px-6 py-4">Added Date</th>
-            <th class="px-6 py-4 text-right">Actions</th>
+            <th v-if="canAddAdmin" class="px-6 py-4 text-right">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
@@ -117,21 +139,21 @@ onMounted(() => {
             </td>
             <td class="px-6 py-4">
               <span :class="`px-2 py-1 text-xs font-bold rounded-full 
-                ${admin.role === 'SUPER_ADMIN' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`">
+                ${getRoleBadgeClass(admin.role)}`">
                 {{ admin.role.replace('_', ' ') }}
               </span>
             </td>
             <td class="px-6 py-4 text-sm text-gray-500">
               {{ new Date(admin.created_at).toLocaleDateString() }}
             </td>
-            <td class="px-6 py-4 text-right">
-              <button @click="handleRemoveAdmin(admin.id)" class="text-gray-400 hover:text-red-600 transition-colors">
+            <td v-if="canAddAdmin" class="px-6 py-4 text-right">
+              <button v-if="canAddAdmin" @click="handleRemoveAdmin(admin.id)" class="text-gray-400 hover:text-red-600 transition-colors">
                 <Trash2 :size="16" />
               </button>
             </td>
           </tr>
           <tr v-if="admins.length === 0" class="text-center">
-             <td colspan="4" class="py-8 text-gray-400 text-sm">No administrators found.</td>
+             <td :colspan="canAddAdmin ? 4 : 3" class="py-8 text-gray-400 text-sm">No administrators found.</td>
           </tr>
         </tbody>
       </table>

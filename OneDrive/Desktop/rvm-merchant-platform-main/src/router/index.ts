@@ -59,6 +59,18 @@ const router = createRouter({
           meta: { title: 'Dashboard' } 
         },
         {
+          path: 'collector',
+          name: 'collector-dashboard',
+          component: () => import('../views/CollectorDashboard.vue'),
+          meta: { title: 'Collector Dashboard', roles: ['COLLECTOR'] }
+        },
+        {
+          path: 'agent',
+          name: 'agent-dashboard',
+          component: () => import('../views/AgentDashboard.vue'),
+          meta: { title: 'Agent Dashboard', roles: ['AGENT'] }
+        },
+        {
           path: 'submissions', // Note: No leading slash
           name: 'submissions',
           component: () => import('../views/Submissions.vue'),
@@ -156,6 +168,18 @@ router.beforeEach(async (to, _from, next) => {
     if (requiresSuperAdmin && admin.role !== 'SUPER_ADMIN') {
       alert("⛔ Access Denied: Super Admin Only");
       next({ name: 'dashboard' }); 
+      return;
+    }
+
+    // Redirect COLLECTOR to their dashboard
+    if (admin.role === 'COLLECTOR' && to.name === 'dashboard') {
+      next({ name: 'collector-dashboard' });
+      return;
+    }
+
+    // Redirect AGENT to their dashboard
+    if (admin.role === 'AGENT' && to.name === 'dashboard') {
+      next({ name: 'agent-dashboard' });
       return;
     }
   }

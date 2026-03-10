@@ -2,10 +2,11 @@
 import { onMounted, computed, watch } from 'vue';
 import { useMachineStore } from '../stores/machines';
 import { useDashboardStats } from '../composables/useDashboardStats';
+import { useMachineReports } from '../composables/useMachineReports';
 import { storeToRefs } from 'pinia';
 import { 
-  AlertCircle, Server, Coins, Scale, Activity, 
-  Recycle, Brush, CheckCircle2, BarChart3
+  AlertCircle, AlertTriangle, Server, Coins, Scale, Activity, 
+  Recycle, Brush, CheckCircle2, BarChart3, Wrench, Printer, WifiOff
 } from 'lucide-vue-next';
 import StatsCard from '../components/StatsCard.vue';
 import { useRouter } from 'vue-router';
@@ -28,6 +29,27 @@ const {
   fetchStats 
 } = useDashboardStats();
 
+// Machine Reports (Critical Alerts from Agent Reports)
+const {
+  machineReports,
+  fetchMachineReports,
+  updateReportStatus
+} = useMachineReports();
+
+// Critical alerts computed
+const criticalAlerts = computed(() => {
+  return machineReports.value.slice(0, 5).map(r => ({
+    id: r.id,
+    machine_name: r.machines?.name || r.device_no,
+    device_no: r.device_no,
+    report_type: r.report_type,
+    description: r.description,
+    severity: r.severity,
+    reported_by: r.reported_by_name,
+    created_at: r.created_at
+  }));
+});
+
 const onlineMachinesCount = computed(() => machines.value.filter((m) => m.isOnline).length);
 
 // Helper for status colors
@@ -43,6 +65,26 @@ const getStatusColor = (status: string) => {
   return map[status] || 'bg-gray-100 text-gray-700';
 };
 
+// Helper for alert severity colors
+const getAlertColor = (severity: string) => {
+  switch (severity) {
+    case 'critical': return 'bg-red-50 border-red-200 text-red-700';
+    case 'warning': return 'bg-amber-50 border-amber-200 text-amber-700';
+    default: return 'bg-blue-50 border-blue-200 text-blue-700';
+  }
+};
+
+// Helper for alert icon
+const getAlertIcon = (type: string) => {
+  switch (type) {
+    case 'BIN_FULL': return AlertTriangle;
+    case 'PRINTER_JAM': return Printer;
+    case 'NETWORK_ISSUE': return WifiOff;
+    case 'MAINTENANCE': return Wrench;
+    default: return AlertCircle;
+  }
+};
+
 const openBigData = () => {
   const routeData = router.resolve({ name: 'BigDataPlatform' });
   window.open(routeData.href, '_blank');
@@ -52,6 +94,7 @@ onMounted(() => {
   // Initial fetch
   machineStore.fetchMachines();
   fetchStats();
+  fetchMachineReports();
   
   // Watch for auth to finish loading, then refetch
   watch(() => auth.loading, (isLoading) => {
@@ -59,6 +102,7 @@ onMounted(() => {
       console.log("Dashboard: Auth loaded, refetching data...");
       machineStore.fetchMachines();
       fetchStats();
+      fetchMachineReports();
     }
   });
   
@@ -68,11 +112,22 @@ onMounted(() => {
       console.log("Dashboard: Role set to " + newRole + ", refetching data...");
       machineStore.fetchMachines();
       fetchStats();
+      fetchMachineReports();
     }
   });
 });
 
 const formatNumber = (num: number) => num.toLocaleString(undefined, { maximumFractionDigits: 1 });
+
+// Handle acknowledge report
+const handleAcknowledge = async (reportId: string) => {
+  await updateReportStatus(reportId, 'ACKNOWLEDGED');
+};
+
+// Handle resolve report
+const handleResolve = async (reportId: string) => {
+  await updateReportStatus(reportId, 'RESOLVED');
+};
 </script>
 
 <template>
@@ -110,6 +165,49 @@ const formatNumber = (num: number) => num.toLocaleString(undefined, { maximumFra
         <StatsCard title="Recycled Weight" :value="`${formatNumber(totalWeight)} kg`" color="purple" description="Environmental Impact">
           <template #icon><Scale :size="24" /></template>
         </StatsCard>
+      </div>
+
+      <!-- Critical Alerts Section -->
+      <div v-if="criticalAlerts.length > 0" class="bg-white rounded-2xl shadow-sm border border-red-100 p-6 mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <AlertTriangle :size="20" class="text-red-600"/>
+            Critical Alerts
+            <span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">
+              {{ criticalAlerts.length }}
+            </span>
+          </h3>
+          <span class="text-xs text-gray-500">Machine issues reported by agents</span>
+        </div>
+        <div class="space-y-3">
+          <div 
+            v-for="alert in criticalAlerts" 
+            :key="alert.id"
+            class="p-4 rounded-xl border flex items-start gap-3"
+            :class="getAlertColor(alert.severity)"
+          >
+            <component :is="getAlertIcon(alert.report_type)" :size="20" class="shrink-0 mt-0.5" />
+            <div class="flex-1 min-w-0">
+              <p class="font-bold text-sm">{{ alert.machine_name }}</p>
+              <p class="text-xs opacity-80">{{ alert.description }}</p>
+              <p class="text-xs mt-1 opacity-60">Reported by {{ alert.reported_by }} • {{ new Date(alert.created_at).toLocaleString() }}</p>
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button 
+                @click="handleAcknowledge(alert.id)"
+                class="px-3 py-1 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+              >
+                Acknowledge
+              </button>
+              <button 
+                @click="handleResolve(alert.id)"
+                class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition"
+              >
+                Resolve
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">

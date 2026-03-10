@@ -20,8 +20,8 @@ const filteredRecords = computed(() => {
   if (!searchTerm.value) return records.value;
   const term = searchTerm.value.toLowerCase();
   return records.value.filter(r => 
-    r.device_no.includes(term) || 
-    r.waste_type.toLowerCase().includes(term)
+    (r.device_no && r.device_no.includes(term)) || 
+    (r.waste_type && r.waste_type.toLowerCase().includes(term))
   );
 });
 

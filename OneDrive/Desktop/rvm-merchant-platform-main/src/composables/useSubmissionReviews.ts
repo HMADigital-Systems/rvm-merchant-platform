@@ -90,9 +90,9 @@ export function useSubmissionReviews() {
                 .select(`*, users(nickname, avatar_url, phone)`)
                 .order('submitted_at', { ascending: false });
 
-            // VIEWER role can see ALL data, others get filtered by merchant
-            // Check VIEWER first before checking merchantId
-            if (auth.role === 'VIEWER') {
+            // VIEWER, COLLECTOR, AGENT roles can see ALL data, others get filtered by merchant
+            // Check roles first before checking merchantId
+            if (auth.role === 'VIEWER' || auth.role === 'COLLECTOR' || auth.role === 'AGENT') {
                 // No filter - see all data
             } else if (auth.merchantId) {
                 query = query.eq('merchant_id', auth.merchantId);

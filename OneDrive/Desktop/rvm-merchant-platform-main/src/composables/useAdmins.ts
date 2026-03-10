@@ -1,11 +1,12 @@
 import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/auth';
+import type { AdminRole } from '../types';
 
 export interface AdminUser {
   id: string;
   email: string;
-  role: 'ADMIN' | 'EDITOR' | 'VIEWER';
+  role: AdminRole;
   created_at: string;
   merchant_id: string | null;
 }
@@ -109,7 +110,7 @@ export function useAdmins() {
         // Update local list
         const admin = admins.value.find(a => a.id === id);
         if (admin) {
-            admin.role = newRole as 'ADMIN' | 'EDITOR' | 'VIEWER';
+            admin.role = newRole as AdminRole;
         }
         return { success: true };
 

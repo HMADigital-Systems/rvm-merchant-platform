@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase';
 import type { Merchant } from '../types'; 
 
 export interface AdminMerchant extends Merchant {
-  admins?: { id: string; email: string }[]; 
+  admins?: { id: string; email: string; role: string }[]; 
   machines?: { 
       device_no: string; 
       name: string; 
@@ -27,12 +27,15 @@ export function useMerchants() {
         .from('merchants')
         .select(`
             *, 
-            app_admins(id, email), 
+            app_admins(id, email, role), 
             machines(device_no, name, rate_plastic, rate_paper, rate_uco)
         `) 
         .order('created_at', { ascending: false });
 
-      if (err) throw err;
+      if (err) {
+        console.error('Error fetching merchants:', err);
+        throw err;
+      }
 
       merchants.value = data.map((m: any) => ({
         ...m,
@@ -40,6 +43,7 @@ export function useMerchants() {
         machines: m.machines || []
       }));
     } catch (err: any) {
+      console.error('Fetch merchants error:', err);
       error.value = err.message;
     } finally {
       loading.value = false;
@@ -70,12 +74,20 @@ export function useMerchants() {
 
       // B. Create New Admin (If provided)
       if (form.newAdminEmail && activeMerchantId) {
+          // Use 'ADMIN' role for merchant-level admins (not SUPER_ADMIN which is for platform)
           const { error: aError } = await supabase.from('app_admins').insert({
             email: form.newAdminEmail,
-            role: 'SUPER_ADMIN',
+            role: 'ADMIN',
             merchant_id: activeMerchantId
           });
-          if (aError && aError.code !== '23505') throw aError;
+          
+          // Log the error for debugging
+          if (aError) {
+              console.error('Error creating admin:', aError);
+              if (aError.code !== '23505') {
+                  throw aError;
+              }
+          }
       }
 
       if (activeMerchantId) {

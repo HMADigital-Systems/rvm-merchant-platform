@@ -26,12 +26,14 @@ export function useCleaningRecords() {
         // Wait for auth to be loaded if still loading or role not set
         if (auth.loading || !auth.role) {
             console.log("CleaningRecords: Waiting for auth/role to be ready... loading:", auth.loading, "role:", auth.role);
+            // Retry after a short delay
+            setTimeout(() => fetchCleaningLogs(), 500);
             return;
         }
         
         loading.value = true;
         try {
-            console.log("CleaningRecords: Fetching data from Supabase...");
+            console.log("CleaningRecords: Fetching data from Supabase... Role:", auth.role);
             const { data, error } = await supabase
                 .from('cleaning_records')
                 .select('*')
@@ -44,9 +46,10 @@ export function useCleaningRecords() {
             }
             
             if (error) throw error;
-            records.value = data as CleaningRecord[];
+            records.value = data as CleaningRecord[] || [];
         } catch (err) {
             console.error("Error fetching logs:", err);
+            records.value = [];
         } finally {
             loading.value = false;
         }

@@ -14,9 +14,12 @@ export function useUserList() {
     // 1. Define Platform Owner Logic
     const isPlatformOwner = auth.role === 'SUPER_ADMIN' && !auth.merchantId;
     const isViewer = auth.role === 'VIEWER';
+    const isCollector = auth.role === 'COLLECTOR';
+    const isAgent = auth.role === 'AGENT';
     
-    // 2. Security Check - VIEWER can see all data
-    if (!auth.merchantId && !isPlatformOwner && !isViewer) return;
+    // 2. Security Check - VIEWER, COLLECTOR, AGENT can see all data
+    // Also allow if user has merchantId (ADMIN, SUPER_ADMIN with merchant)
+    if (!auth.merchantId && !isPlatformOwner && !isViewer && !isCollector && !isAgent) return;
 
     loading.value = true;
     try {

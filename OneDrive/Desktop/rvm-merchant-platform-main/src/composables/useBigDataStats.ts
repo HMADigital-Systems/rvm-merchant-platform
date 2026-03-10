@@ -98,13 +98,13 @@ export function useBigDataStats() {
         if (pData) totalLifetimePoints.value = pData.reduce((sum, r) => sum + (Number(r.calculated_value) || 0), 0);
       }
 
-      // 4. LIVE FEED - VIEWER role sees ALL data
+      // 4. LIVE FEED - VIEWER, COLLECTOR, AGENT roles see ALL data
       let qFeed = supabase.from('submission_reviews')
         .select('*, users(nickname)')
         .order('submitted_at', { ascending: false, nullsFirst: false }) 
         .limit(20);
         
-      if (auth.role !== 'VIEWER' && auth.merchantId) qFeed = qFeed.eq('merchant_id', auth.merchantId);
+      if ((auth.role !== 'VIEWER' && auth.role !== 'COLLECTOR' && auth.role !== 'AGENT') && auth.merchantId) qFeed = qFeed.eq('merchant_id', auth.merchantId);
       
       const { data: feed } = await qFeed;
       if (feed) recentSubmissions.value = feed;
@@ -166,8 +166,8 @@ export function useBigDataStats() {
 
       // ✅ 3. FETCH PERIOD SUMMARY (Small Boxes)
       if (!selectedMachineId.value) {
-          // VIEWER role sees ALL data, others get filtered by merchant
-          const filterMerchantId = auth.role === 'VIEWER' ? null : (auth.merchantId || null);
+          // VIEWER, COLLECTOR, AGENT roles see ALL data, others get filtered by merchant
+          const filterMerchantId = (auth.role === 'VIEWER' || auth.role === 'COLLECTOR' || auth.role === 'AGENT') ? null : (auth.merchantId || null);
           const { data: rpcStats } = await supabase.rpc('get_filtered_stats', {
             merchant_uuid: filterMerchantId,
             filter_date: startDateStr || null
@@ -190,7 +190,7 @@ export function useBigDataStats() {
         .select('api_weight, submitted_at, calculated_value'); 
       
       if (startDateStr) qSubs = qSubs.gte('submitted_at', startDateStr);
-      if (auth.role !== 'VIEWER' && auth.merchantId) qSubs = qSubs.eq('merchant_id', auth.merchantId);
+      if ((auth.role !== 'VIEWER' && auth.role !== 'COLLECTOR' && auth.role !== 'AGENT') && auth.merchantId) qSubs = qSubs.eq('merchant_id', auth.merchantId);
       
       // ✅ Filter by Machine
       if (selectedMachineId.value) {
@@ -222,7 +222,7 @@ export function useBigDataStats() {
         .select('bag_weight_collected, cleaned_at');
         
       if (startDateStr) qClean = qClean.gte('cleaned_at', startDateStr);
-      if (auth.role !== 'VIEWER' && auth.merchantId) qClean = qClean.eq('merchant_id', auth.merchantId);
+      if ((auth.role !== 'VIEWER' && auth.role !== 'COLLECTOR' && auth.role !== 'AGENT') && auth.merchantId) qClean = qClean.eq('merchant_id', auth.merchantId);
       
       // ✅ Filter by Machine
       if (selectedMachineId.value) {
@@ -251,7 +251,7 @@ export function useBigDataStats() {
          let qWith = supabase.from('withdrawals')
             .select('amount, status, created_at');
          if (startDateStr) qWith = qWith.gte('created_at', startDateStr);
-         if (auth.role !== 'VIEWER' && auth.merchantId) qWith = qWith.eq('merchant_id', auth.merchantId);
+         if ((auth.role !== 'VIEWER' && auth.role !== 'COLLECTOR' && auth.role !== 'AGENT') && auth.merchantId) qWith = qWith.eq('merchant_id', auth.merchantId);
 
          const { data: wData } = await qWith;
          if (wData) {

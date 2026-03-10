@@ -40,13 +40,13 @@ export function useDashboardStats() {
     const userMerchantId = auth.merchantId;
     
     // Helper to apply merchant filter
-    // VIEWER role sees ALL data (no merchant filter)
+    // VIEWER, COLLECTOR, AGENT roles see ALL data (no merchant filter)
     // ADMIN/SUPER_ADMIN see only their merchant's data
     const applyFilter = (query: any) => {
-        // VIEWER role can see ALL data (no filter) - check this FIRST
-        if (userRole === 'VIEWER') return query;
+        // VIEWER, COLLECTOR, AGENT roles can see ALL data (no filter)
+        if (userRole === 'VIEWER' || userRole === 'COLLECTOR' || userRole === 'AGENT') return query;
         
-        // If no merchantId for non-VIEWER, show nothing
+        // If no merchantId for non-VIEWER/COLLECTOR/AGENT, show nothing
         if (!userMerchantId) return query.eq('id', '00000000-0000-0000-0000-000000000000');
         
         // ADMIN/SUPER_ADMIN only see their merchant's data
@@ -65,7 +65,7 @@ export function useDashboardStats() {
       // B. Recent Activity Lists
       let recWithdrawalsQuery = supabase.from('withdrawals').select('*, users(nickname, phone)').order('created_at', { ascending: false }).limit(5);
       let recSubmissionsQuery = supabase.from('submission_reviews').select('*, users(nickname)').order('submitted_at', { ascending: false }).limit(5);
-      let recCleaningQuery = supabase.from('cleaning_records').select('*').order('created_at', { ascending: false }).limit(5);
+      let recCleaningQuery = supabase.from('cleaning_records').select('*').order('cleaned_at', { ascending: false }).limit(5);
 
       // Apply Filters
       pendingQuery = applyFilter(pendingQuery);
@@ -100,8 +100,8 @@ export function useDashboardStats() {
       // ---------------------------------------------------------
 
       // A. TOTAL WEIGHT (RPC)
-      // VIEWER role gets all data, others get filtered by merchant
-      const weightMerchantId = userRole === 'VIEWER' ? null : (userMerchantId || null);
+      // VIEWER, COLLECTOR, AGENT roles get all data, others get filtered by merchant
+      const weightMerchantId = (userRole === 'VIEWER' || userRole === 'COLLECTOR' || userRole === 'AGENT') ? null : (userMerchantId || null);
       const { data: weightSum, error: rpcError } = await supabase.rpc('get_total_weight', { merchant_uuid: weightMerchantId });
       
       if (!rpcError && weightSum !== null) {
@@ -112,16 +112,16 @@ export function useDashboardStats() {
           .select('api_weight')
           .range(0, 19999);
         
-        // Only apply merchant filter for non-VIEWER roles
-        if (userRole !== 'VIEWER' && userMerchantId) qWeight = qWeight.eq('merchant_id', userMerchantId);
+        // Only apply merchant filter for non-VIEWER/COLLECTOR/AGENT roles
+        if ((userRole !== 'VIEWER' && userRole !== 'COLLECTOR' && userRole !== 'AGENT') && userMerchantId) qWeight = qWeight.eq('merchant_id', userMerchantId);
         
         const { data: wData } = await qWeight;
         if (wData) totalWeight.value = wData.reduce((sum: number, r: any) => sum + (Number(r.api_weight) || 0), 0);
       }
 
       // B. TOTAL LIFETIME POINTS (RPC)
-      // VIEWER role gets all data, others get filtered by merchant
-      const pointMerchantId = userRole === 'VIEWER' ? null : (userMerchantId || null);
+      // VIEWER, COLLECTOR, AGENT roles get all data, others get filtered by merchant
+      const pointMerchantId = (userRole === 'VIEWER' || userRole === 'COLLECTOR' || userRole === 'AGENT') ? null : (userMerchantId || null);
       const { data: pointSum, error: ptRpcError } = await supabase.rpc('get_total_points', { merchant_uuid: pointMerchantId });
       
       if (!ptRpcError && pointSum !== null) {
@@ -132,8 +132,8 @@ export function useDashboardStats() {
           .select('calculated_value')
           .range(0, 19999);
           
-        // Only apply merchant filter for non-VIEWER roles
-        if (userRole !== 'VIEWER' && userMerchantId) qPoints = qPoints.eq('merchant_id', userMerchantId);
+        // Only apply merchant filter for non-VIEWER/COLLECTOR/AGENT roles
+        if ((userRole !== 'VIEWER' && userRole !== 'COLLECTOR' && userRole !== 'AGENT') && userMerchantId) qPoints = qPoints.eq('merchant_id', userMerchantId);
         
         const { data: pData } = await qPoints;
         if (pData) totalPoints.value = pData.reduce((sum: number, r: any) => sum + (Number(r.calculated_value) || 0), 0);
