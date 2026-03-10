@@ -27,3 +27,6 @@ npm run dev
 ## Deployment
 
 This project is deployed on Vercel. Push to main branch to trigger deployment.
+
+## Last Updated
+- Date: 2026-03-10
