@@ -1,9 +1,10 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
-import crypto from 'crypto';
+import crypto from 'crypto'; // Native Node.js library
 
-export default async function handler(req, res) {
-  // 1. Force CORS Headers
-  res.setHeader('Access-Control-Allow-Credentials', true);
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // 1. Force CORS Headers (The "Nuclear Option")
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*'); 
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
@@ -11,34 +12,36 @@ export default async function handler(req, res) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // 2. Handle Options
+  // 2. Handle Options (Preflight)
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
   // 3. Get Secrets
-  const SECRET = process.env.VITE_AUTOGCM_SECRET;
-  const MERCHANT_NO = process.env.VITE_AUTOGCM_MERCHANT_NO;
-  const API_BASE = process.env.VITE_AUTOGCM_URL || "https://api.autogcm.com"; 
+  // Note: We use the names from your .env file here
+  const SECRET = process.env.VITE_API_SECRET; 
+  const MERCHANT_NO = process.env.VITE_MERCHANT_NO;
+  const API_BASE = "https://api.autogcm.com"; // Global Server
 
-  // 4. Critical Check (Kept this for safety, but it won't print unless it fails)
+  // 4. Debugging: Check if secrets exist
   if (!SECRET || !MERCHANT_NO) {
-    console.error("❌ CRITICAL ERROR: Secrets are missing from Environment Variables!");
-    res.status(500).json({ error: "Server Configuration Error" });
-    return;
+    console.error("❌ CRITICAL ERROR: Secrets are missing!");
+    return res.status(500).json({ error: "Server Secret Missing" });
   }
 
   // 5. Logic
   const { endpoint, method = 'GET', params = {}, body = {} } = req.body || req.query;
+  
+  // 🔥 CRITICAL FIX: Use Milliseconds (Date.now()) not Seconds
   const timestamp = Date.now().toString();
 
-  // ✅ MD5 GENERATION
+  // 6. MD5 Generation
+  // Sign = MD5(MERCHANT_NO + SECRET + timestamp)
   const sign = crypto
     .createHash('md5')
     .update(MERCHANT_NO + SECRET + timestamp)
-    .digest('hex')
-    .toUpperCase(); 
+    .digest('hex');
 
   const headers = {
     "merchant-no": MERCHANT_NO,
@@ -48,21 +51,21 @@ export default async function handler(req, res) {
   };
 
   try {
-    // 🚀 REMOVED: console.log(`🚀 Proxying ...`); (Clean Terminal)
+    console.log(`🚀 Proxying ${method} to: ${API_BASE}${endpoint}`); 
     
     const response = await axios({
       url: `${API_BASE}${endpoint}`,
       method: method,
       headers: headers,
       params: params,
-      data: body
+      data: body,
+      timeout: 8000
     });
 
     res.status(200).json(response.data);
-  } catch (error) {
-    // ⚠️ Only log actual errors (So you know if the Chinese API is down)
-    console.error(`❌ API Error [${endpoint}]:`, error.message);
-    
+  } catch (error: any) {
+    console.error("❌ Upstream API Error:", error.message);
+    // Return the specific error from AutoGCM if available
     res.status(500).json({ 
       error: error.message, 
       details: error.response?.data || "No external response" 

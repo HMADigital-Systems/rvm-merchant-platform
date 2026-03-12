@@ -1,47 +1,50 @@
-# 📱 RVM User Web App
+# ♻️ RVM Merchant Platform
 
-![Version](https://img.shields.io/badge/version-1.0.0-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Vue 3](https://img.shields.io/badge/Vue.js-3.5-4FC08D?style=flat&logo=vue.js)
-![Vite](https://img.shields.io/badge/Vite-7.0-646CFF?style=flat&logo=vite)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=flat&logo=typescript)
+![Vite](https://img.shields.io/badge/Vite-6.0-646CFF?style=flat&logo=vite)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC?style=flat&logo=tailwind-css)
-![Supabase](https://img.shields.io/badge/Supabase-Database-3ECF8E?style=flat&logo=supabase)
 
-A mobile-first web application designed for **recyclers** using the Smart Waste Sorting System. This app allows users to track their environmental impact, find nearby Reverse Vending Machines (RVMs), and manage their reward points.
+A comprehensive web-based management dashboard for **Reverse Vending Machine (RVM)** merchants. This platform enables administrators to monitor machine status, verify recycling submissions, manage user withdrawals, and track environmental impact statistics in real-time.
+
+It integrates seamlessly with the **Smart Waste Sorting System API** (`api.autogcm.com`) to sync live machine data and user recycling records.
 
 ---
 
 ## 🚀 Key Features
 
-### 👤 **User Dashboard**
-- **Impact Tracking:** View lifetime recycled weight (kg) and total points earned.
-- **Balance & Withdrawals:** Check current point balance and request withdrawals/redemptions.
-- **Activity History:** Detailed logs of every recycling transaction (Date, Machine, Weight, Points).
+### 📊 **Dashboard & Analytics**
+- **Real-time Overview:** Live stats on total points issued, recycled weight, and pending actions.
+- **Activity Feeds:** Monitor recent recycling submissions, machine cleaning logs, and withdrawal requests.
+- **System Health:** Instant status checks for system connectivity.
 
-### 📍 **Machine Locator**
-- **Nearby Stations:** Automatically finds the closest RVMs using the device's GPS.
-- **Live Status:** See if a machine is Online/Offline and view compartment fullness before visiting.
-- **Navigation:** Get address details and distance to machines.
+### 🤖 **Machine Management**
+- **Live Status Monitoring:** View online/offline status, bin fullness levels, and storage weight for all RVM units.
+- **Location Tracking:** Map machine locations and zones via GPS coordinates.
+- **Maintenance Logs:** Track cleaning and maintenance history.
 
-### 🔐 **Authentication & Profile**
-- **Secure Login:** Phone number verification via OTP (Firebase Auth).
-- **Profile Management:** Update nickname and avatar.
-- **Card Binding:** Link physical IC cards to the digital account via QR code.
+### ✅ **Submission Verification**
+- **Audit Tool:** Review user recycling claims with "Accept", "Correct", or "Reject" workflows.
+- **Data Reconciliation:** Compare user-submitted weight vs. machine-reported warehouse weight.
+- **Fraud Prevention:** Flag mismatches between theoretical and actual weights.
 
-### 📱 **Mobile Experience**
-- **Responsive Design:** Optimized for mobile browsers (PWA-ready).
-- **Touch Gestures:** Swipeable banners and touch-friendly controls.
+### 💰 **Financial & User Management**
+- **Withdrawal Processing:** Approve or reject point redemption requests.
+- **User CRM:** View user profiles, recycling history, and balance adjustments.
+- **Merchant Settings:** Configure rates per kg and platform parameters.
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Framework:** [Vue 3](https://vuejs.org/) (Composition API)
+- **Framework:** [Vue 3](https://vuejs.org/) (Script Setup + Composition API)
 - **Build Tool:** [Vite](https://vitejs.dev/)
+- **Language:** [TypeScript](https://www.typescriptlang.org/)
 - **Styling:** [Tailwind CSS](https://tailwindcss.com/)
-- **Auth:** [Firebase Auth](https://firebase.google.com/) (Phone/OTP)
-- **Database:** [Supabase](https://supabase.com/) (User data & Merchant linking)
-- **UI Components:** [Swiper.js](https://swiperjs.com/) (Sliders), [Lucide Vue](https://lucide.dev/) (Icons)
-- **API Integration:** Axios + Vercel Serverless Functions
+- **State Management:** [Pinia](https://pinia.vuejs.org/)
+- **Backend / Auth:** [Supabase](https://supabase.com/)
+- **External API:** Axios + Vercel Serverless Functions (Proxy)
 
 ---
 
@@ -52,88 +55,82 @@ A mobile-first web application designed for **recyclers** using the Smart Waste 
 - npm or pnpm
 
 ### 1. Clone the Repository
-```
-git clone [https://github.com/your-org/rvm-web.git](https://github.com/your-org/rvm-web.git)
-cd rvm-web
-```
+git clone [https://github.com/your-org/rvm-merchant-platform.git](https://github.com/your-org/rvm-merchant-platform.git)
+cd rvm-merchant-platform
 
 ### 2. Install Dependencies
-```
 npm install
-```
 
 ### 3. Environment Configuration
+Create a .env file in the root directory. You must configure both Supabase (for auth/db) and the RVM Vendor API keys.
 ```
 # ------------------------------
 # 1. Supabase Configuration
 # ------------------------------
 VITE_SUPABASE_URL=[https://your-project.supabase.co](https://your-project.supabase.co)
 VITE_SUPABASE_ANON_KEY=your-public-anon-key
+# (Optional) Service role for backend scripts
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # ------------------------------
-# 2. Firebase Configuration (For Phone Auth)
+# 2. RVM API Configuration (AutoGCM)
 # ------------------------------
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-
-# ------------------------------
-# 3. RVM API & Backend (Vercel)
-# ------------------------------
-# Used by the serverless proxy to talk to the machine network
+# Your specific Merchant ID provided by the vendor
 VITE_MERCHANT_NO=....
+# Your Secret Key for signing API requests
 VITE_API_SECRET=your_api_secret_key
+
+# ------------------------------
+# 3. Deployment (Vercel)
+# ------------------------------
+# (Automatically set by Vercel during deployment, needed for local CLI)
+VERCEL_OIDC_TOKEN=...
 ```
 
 ### 4. Run Development Server
 ```
 npm run dev
 ```
-
-Note on API Proxy: > In development, vite.config.js proxies /api requests to http://localhost:3000. You may need to run the Vercel dev server (vercel dev) to handle the serverless functions locally.
-
 ---
 
 ## 🔌 API Integration
-This app consumes the Smart Waste Sorting System API to interact with physical machines. To ensure security (hiding API secrets) and solve CORS issues, calls are routed through a proxy (/api/proxy).
-### Key Endpoints (User Context)
+This platform acts as a bridge between the Supabase Database (internal user data) and the RVM Hardware API (external machine data).
 
-| Feature | Endpoint | Method | Description |
+External API Details
+Host: https://api.autogcm.com
+
+Authentication: MD5 Signature (merchant-no + secret + timestamp)
+
+Proxy: To avoid CORS issues and secure credentials, API calls are routed through /api/proxy (Vercel Serverless Function).
+
+### Key Endpoints Used
+
+| Feature Category | Endpoint | Method | Description |
 | :--- | :--- | :--- | :--- |
-| **Sync Account** | `/api/open/v1/user/account/sync` | `POST` | Syncs user data (nickname, avatar) with the RVM network. |
-| **Recycling Logs** | `/api/open/v1/put` | `GET` | Fetches the user's personal recycling history. |
-| **Nearby RVMs** | `/api/open/video/v2/nearby` | `GET` | Finds machines based on lat/long coordinates. |
-| **Machine Status** | `/api/open/v1/device/position` | `GET` | Checks specific machine details (bin levels, status). |
-| **Remote Open** | `/api/open/v1/open` | `POST` | Allows opening a bin remotely (if authorized). |
-| **Bind Card** | `/api/open/v1/code/auth/bindCard` | `GET` | Links a physical RFID card to the current phone number. |
+| **User Management** | `/api/open/v1/user/account/sync` | `POST` | **User Sync:** Syncs user profile and points balance from the machine network. |
+| | `/api/open/v1/register` | `POST` | **Register:** Registers a new user in the system. |
+| | `/api/open/v1/code/auth` | `GET` | **QR Auth:** Handles QR code authorization/login requests. |
+| | `/api/open/v1/code/auth/bindCard` | `GET` | **Bind Card:** Links a physical IC card to a user account via QR code. |
+| **Machine Data** | `/api/open/v1/device/position` | `GET` | **Machine Status:** Gets live bin levels, current weight, and operational status for a specific device. |
+| | `/api/open/video/v2/nearby` | `GET` | **Map View:** Fetches a list of nearby RVMs based on GPS coordinates (latitude/longitude). |
+| | `/api/open/v1/open` | `POST` | **Remote Control:** Remotely opens a specific bin door on a machine. |
+| **Recycling Logs** | `/api/open/v1/put` | `GET` | **Activity Logs:** Retrieves a paginated history of user recycling activities and weights. |
+| | `/api/open/v1/put/{putId}` | `GET` | **Log Details:** Fetches detailed data for a specific recycling transaction. |
+| **Real-time Events** | `/api/open/v1/subscription` | `PUT` | **Set Webhook:** Registers your server URL to receive real-time push notifications (e.g., bin full, new deposit). |
+| | `/api/open/v1/subscription` | `GET` | **Check Webhook:** Queries the currently configured notification URL. |
 
 ---
 
-## 📂 Project Structure
-```
-src/
-├── api/             # Vercel Serverless Functions (Proxy)
-├── assets/          # Static assets (CSS, Images)
-├── components/      # UI Components (NavBar, RVMCard, etc.)
-├── composables/     # Logic Hooks (useHomeLogic, useUserDashboard)
-├── firebase/        # Firebase initialization config
-├── pages/           # Route Views (HomePage, Profile, Dashboard)
-├── router/          # Vue Router configuration
-├── services/        # API Wrappers (autogcm.js, supabase.js)
-└── App.vue          # Root component
-```
----
 ## 🚢 Deployment
-The project is configured for Vercel (vercel.json).
+The project is optimized for deployment on Vercel.
 
-1. Connect repository to Vercel.
+Push your code to GitHub.
 
-2. Add all Environment Variables (Supabase, Firebase, and RVM API Keys) in the Vercel Dashboard.
+Import the project in Vercel.
 
-3. Deploy.
+Add the Environment Variables (from step 3 above) in the Vercel Project Settings.
+
+Deploy! 🚀
 
 ---
 

@@ -1,23 +1,16 @@
-<template>
-  <div class="min-h-screen bg-white text-gray-900 relative">
-    <!-- 🌐 Global Language Selector -->
-    <LanguageSelector />
+<script setup lang="ts">
+import { onMounted } from 'vue';
+import { RouterView } from 'vue-router';
+import { useAuthStore } from './stores/auth';
 
-    <!-- 🧭 Page Content -->
-    <router-view />
-  </div>
-</template>
+const auth = useAuthStore();
 
-<script setup>
-import LanguageSelector from "./components/LanguageSelector.vue";
+// Restore session on refresh - always initialize to ensure role is properly set
+onMounted(() => {
+  auth.initializeAuth();
+});
 </script>
 
-<style>
-/* Optional global fade transition for route changes */
-.fade-enter-active, .fade-leave-active {
-  transition: opacity 0.5s;
-}
-.fade-enter-from, .fade-leave-to {
-  opacity: 0;
-}
-</style>
+<template>
+  <RouterView />
+</template>
