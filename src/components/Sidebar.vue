@@ -3,7 +3,7 @@ import { RouterLink, useRoute } from 'vue-router';
 import { computed } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useNotifications, notificationCount, issueCount } from '../composables/useNotifications';
-import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2, Settings, Globe, AlertCircle, Bell } from 'lucide-vue-next';
+import { LayoutDashboard, Wallet, Users, MonitorSmartphone, LogOut, Shield, ClipboardCheck, Trash2, Settings, Globe, AlertCircle, Bell, Megaphone, Briefcase, FileText, Trophy } from 'lucide-vue-next';
 
 const route = useRoute();
 const auth = useAuthStore();
@@ -86,6 +86,14 @@ const settingsPath = computed(() => {
         Waste Logs
       </RouterLink>
 
+      <RouterLink to="/reports" 
+        class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+        :class="isActive('/reports') ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+      >
+        <FileText :size="20" />
+        Reports
+      </RouterLink>
+
       <!-- Notifications - visible to Agents and Collectors (not SUPER_ADMIN) -->
       <RouterLink to="/notifications" 
         v-if="auth.role !== 'SUPER_ADMIN'"
@@ -110,8 +118,16 @@ const settingsPath = computed(() => {
         Admin Access
       </RouterLink>
 
-      <div v-if="auth.role === 'SUPER_ADMIN' && !auth.merchantId" class="pt-6 mt-2 border-t border-gray-100">
-        <p class="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Platform Owner</p>
+      <div v-if="auth.role === 'SUPER_ADMIN'" class="pt-4 mt-4 border-t border-gray-100">
+        <p class="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Platform Owner</p>
+
+        <RouterLink to="/admin/leaderboard" 
+          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+          :class="isActive('/admin/leaderboard') ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-emerald-50 hover:text-emerald-700'"
+        >
+          <Trophy :size="20" />
+          Leaderboard
+        </RouterLink>
         
         <RouterLink to="/super-admin/merchants" 
           class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
@@ -121,20 +137,36 @@ const settingsPath = computed(() => {
           Manage Clients
         </RouterLink>
 
-        <RouterLink to="/super-admin/issues" 
-          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors relative"
-          :class="isActive('/super-admin/issues') ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+        <RouterLink to="/platform/advertising" 
+          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+          :class="isActive('/platform/advertising') ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
         >
-          <AlertCircle :size="20" />
-          <span>Issue Reports</span>
-          <span
-            v-if="issueCount > 0"
-            class="absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5 flex items-center justify-center text-xs font-bold text-white bg-red-500 rounded-full"
-          >
-            {{ issueCount > 99 ? '99+' : issueCount }}
-          </span>
+          <Megaphone :size="20" />
+          Digital Advertising
         </RouterLink>
-      </div>
+
+        <RouterLink to="/super-admin/investors" 
+          class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+          :class="isActive('/super-admin/investors') ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+        >
+          <Briefcase :size="20" />
+          Investor Management
+        </RouterLink>
+
+          <RouterLink to="/super-admin/issues" 
+            class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors relative"
+            :class="isActive('/super-admin/issues') ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'"
+          >
+            <AlertCircle :size="20" />
+            <span>Issue Reports</span>
+            <span
+              v-if="issueCount > 0"
+              class="absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5 flex items-center justify-center text-xs font-bold text-white bg-red-500 rounded-full"
+            >
+              {{ issueCount > 99 ? '99+' : issueCount }}
+            </span>
+          </RouterLink>
+       </div>
     </nav>
 
     <div class="p-4 border-t border-gray-100 space-y-2">

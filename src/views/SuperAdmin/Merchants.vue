@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
-import { Building2, UserPlus, MonitorSmartphone, User, ChevronDown, Columns, X, Trash2 } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { Building2, UserPlus, MonitorSmartphone, User, ChevronDown, Columns, X, Trophy } from 'lucide-vue-next';
 import { useMerchants, type AdminMerchant } from '../../composables/useMerchants';
 import { supabase } from '../../services/supabase';
 import MerchantModal from '../../components/MerchantModal.vue';
 
 const { merchants, loading, fetchMerchants, saveMerchant, deleteMerchantAdmin, deleteMerchant, toggleStatus } = useMerchants();
+
+const router = useRouter();
 
 const allMachines = ref<{ device_no: string; name: string; merchant_id?: string }[]>([]);
 
@@ -130,6 +133,13 @@ onMounted(() => {
         <UserPlus :size="18" />
         <span class="font-bold">New Client</span>
       </button>
+      <button 
+        @click="$router.push('/admin/leaderboard')"
+        class="flex items-center space-x-2 text-sm bg-amber-500 text-white hover:bg-amber-600 px-4 py-2.5 rounded-xl shadow-lg shadow-amber-200 transition-all active:scale-95"
+      >
+        <Trophy :size="18" />
+        <span class="font-bold">Leaderboard</span>
+      </button>
     </div>
 
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -221,7 +231,9 @@ onMounted(() => {
             <td v-if="visibleColumns.admins" class="px-6 py-4">
                <div v-if="m.admins && m.admins.length > 0" class="space-y-1">
                  <div v-for="admin in m.admins" :key="admin.id" class="flex items-center text-xs text-gray-600">
-                    <User :size="12" class="mr-1.5 text-gray-400"/> {{ admin.email }}
+                    <User :size="12" class="mr-1.5 text-gray-400"/> 
+                    <span class="font-medium">{{ admin.email }}</span>
+                    <span v-if="admin.role" class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{{ admin.role }}</span>
                  </div>
                </div>
                <span v-else class="text-xs text-gray-400 italic">No admins invited</span>

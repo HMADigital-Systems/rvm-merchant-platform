@@ -94,6 +94,7 @@ onMounted(async () => {
 </script>
 
 <template>
+  <!-- Standard mode with sidebar -->
   <div class="flex h-screen bg-gray-50 font-sans overflow-hidden">
     
     <div class="fixed inset-y-0 left-0 z-30 w-64 bg-white transition-all duration-300">

@@ -59,6 +59,7 @@ export function useUserProfile(userId: string) {
   const calculateBalance = () => {
       // Sum only VERIFIED transactions
       const totalEarned = recyclingHistory.value
+        // @ts-ignore - status types mismatch with legacy values
         .filter(r => r.status === 'VERIFIED')
         .reduce((sum, r) => sum + Number(r.calculated_value || 0), 0);
       

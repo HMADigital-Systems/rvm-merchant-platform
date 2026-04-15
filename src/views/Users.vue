@@ -12,6 +12,16 @@ import UserCreateModal from '../components/UserCreateModal.vue';
 // Logic
 const { users, loading, isSubmitting, adjustBalance, importUser, deleteUser } = useUserList();
 const searchQuery = ref('');
+const activeFilter = ref('all');
+
+// Filter tabs
+const filterTabs = [
+  { key: 'all', label: 'All Users' },
+  { key: 'latest', label: 'Latest' },
+  { key: 'top', label: 'Top Recyclers' },
+  { key: 'active', label: 'Active' },
+  { key: 'new', label: 'New Registers' }
+];
 
 // --- PAGINATION STATE ---
 const currentPage = ref(1);
@@ -97,11 +107,53 @@ const handleCreateUserConfirm = async (payload: { nickname: string, phone: strin
 
 // --- COMPUTED ---
 const filteredUsers = computed(() => {
-  if (!searchQuery.value) return users.value;
-  const q = searchQuery.value.toLowerCase();
-  return users.value.filter(u => 
-    u.nickname?.toLowerCase().includes(q) || u.phone?.includes(q)
-  );
+  let result = users.value;
+  
+  // Apply filter tab
+  if (activeFilter.value === 'latest') {
+    // Latest users - sorted by created_at descending
+    result = [...result].sort((a, b) => {
+      const dateA = new Date(a.created_at || 0).getTime();
+      const dateB = new Date(b.created_at || 0).getTime();
+      return dateB - dateA;
+    });
+  } else if (activeFilter.value === 'top') {
+    // Top recyclers - highest display_weight (from useUserList)
+    result = [...result].sort((a, b) => (b.display_weight || 0) - (a.display_weight || 0));
+  } else if (activeFilter.value === 'active') {
+    // Active users - have submissions in last 30 days (by last_verified_submit)
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    result = result.filter(u => {
+      const lastSub = new Date(u.last_verified_submit || 0).getTime();
+      return lastSub >= thirtyDaysAgo;
+    }).sort((a, b) => {
+      const dateA = new Date(b.last_verified_submit || 0).getTime();
+      const dateB = new Date(a.last_verified_submit || 0).getTime();
+      return dateA - dateB;
+    });
+  } else if (activeFilter.value === 'new') {
+    // New registers - joined this month
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    result = result.filter(u => {
+      const created = new Date(u.created_at || 0).getTime();
+      return created >= startOfMonth;
+    }).sort((a, b) => {
+      const dateA = new Date(b.created_at || 0).getTime();
+      const dateB = new Date(a.created_at || 0).getTime();
+      return dateA - dateB;
+    });
+  }
+  
+  // Apply search
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase();
+    result = result.filter(u => 
+      u.nickname?.toLowerCase().includes(q) || u.phone?.includes(q)
+    );
+  }
+  
+  return result;
 });
 
 // Pagination Logic
@@ -126,7 +178,22 @@ const handleImageError = (e: Event) => {
 
 <template>
   <div class="space-y-6">
-      
+       
+    <!-- Filter Tabs -->
+    <div class="flex flex-wrap gap-2">
+        <button 
+            v-for="tab in filterTabs" 
+            :key="tab.key"
+            @click="activeFilter = tab.key"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+            :class="activeFilter === tab.key 
+                ? 'bg-gray-900 text-white shadow-lg' 
+                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'"
+        >
+            {{ tab.label }}
+        </button>
+    </div>
+       
     <div class="flex flex-col md:flex-row justify-between items-center gap-4">
         <div class="relative w-full md:w-96">
             <Search class="absolute left-3 top-2.5 text-gray-400" :size="20"/>

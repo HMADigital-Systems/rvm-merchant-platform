@@ -3,7 +3,7 @@ import { supabase } from '../services/supabase';
 import type { Merchant } from '../types'; 
 
 export interface AdminMerchant extends Merchant {
-  admins?: { id: string; email: string }[]; 
+  admins?: { id: string; email: string; role: string }[]; 
   machines?: { 
       device_no: string; 
       name: string; 
@@ -27,7 +27,7 @@ export function useMerchants() {
         .from('merchants')
         .select(`
             *, 
-            app_admins(id, email), 
+            app_admins(id, email, role), 
             machines(device_no, name, rate_plastic, rate_paper, rate_uco)
         `) 
         .order('created_at', { ascending: false });

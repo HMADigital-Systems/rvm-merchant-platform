@@ -126,7 +126,8 @@ async function processSingleUser(user: any, machineMap: any, now: Date, forceRes
                 rate_per_kg: rate,
                 photo_url: record.imgUrl,
                 submitted_at: record.createTime,
-                status: 'PENDING',
+                status: 'Pending',
+                is_suspicious: false,
                 source: 'FETCH',
                 bin_weight_snapshot: record.positionWeight || 0
             });

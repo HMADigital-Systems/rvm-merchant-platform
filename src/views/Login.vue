@@ -8,12 +8,14 @@ const email = ref('');
 const password = ref('');
 const loading = ref(false);
 const errorMsg = ref('');
-const isRegisterMode = ref(false); // Toggle between Login and Register
+const isRegisterMode = ref(false);
+const debugMsg = ref(''); // Toggle between Login and Register
 
 const router = useRouter();
 const auth = useAuthStore();
 
 // Safe router push function to prevent errors
+// Reserved for future use - router helper
 const safePush = (path: string) => {
   if (router) {
     router.push(path);
@@ -23,31 +25,39 @@ const safePush = (path: string) => {
 const handleSubmit = async () => {
   loading.value = true;
   errorMsg.value = '';
+  debugMsg.value = 'Starting login...';
 
   try {
     if (!email.value || !password.value) {
       throw new Error('Please enter both email and password');
     }
 
+    debugMsg.value = `Checking credentials for: ${email.value}`;
+    
     try {
       if (isRegisterMode.value) {
-        // Create new password for whitelisted email
         await auth.register(email.value, password.value);
       } else {
-        // Normal Login
+        debugMsg.value = 'Calling auth.login()...';
         await auth.login(email.value, password.value);
+        debugMsg.value = 'auth.login() completed, role=' + auth.role;
+        
+        // auth.login() already handles redirect, just show success
+        debugMsg.value = 'Login successful!';
       }
     } catch (loginError: any) {
-      // Check if error is from login - might contain 'push' in stack
-      console.error('Login error:', loginError);
-      throw loginError;
+      console.error('Login error caught:', loginError);
+      debugMsg.value = 'Error: ' + loginError.message;
+      errorMsg.value = loginError.message || 'Login failed. Please check your credentials.';
+      loading.value = false;
+      return;
     }
     
-    // Redirect handled inside store, no need to redirect here
-
+    debugMsg.value = 'Login successful! Redirecting...';
   } catch (e: any) {
     console.error('Submit error:', e);
     errorMsg.value = e.message || 'Authentication failed';
+    debugMsg.value = 'Error: ' + e.message;
   } finally {
     loading.value = false;
   }
@@ -114,6 +124,14 @@ const handleSubmit = async () => {
             <div class="flex">
               <div class="ml-3">
                 <h3 class="text-sm font-medium text-red-800">{{ errorMsg }}</h3>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="debugMsg" class="rounded-md bg-blue-50 p-4 border border-blue-100">
+            <div class="flex">
+              <div class="ml-3">
+                <h3 class="text-sm font-medium text-blue-800">{{ debugMsg }}</h3>
               </div>
             </div>
           </div>

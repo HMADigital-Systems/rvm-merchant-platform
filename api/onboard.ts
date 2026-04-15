@@ -286,6 +286,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             } else {
                 totalImportedValue = Number((totalImportedValue + recordValue).toFixed(2));
                 totalImportedWeight = Number((totalImportedWeight + recordWeight).toFixed(2));
+                
+                // Broadcast realtime event (Socket.io style via API)
+                fetch(process.env.VITE_API_URL || 'http://localhost:5173' + '/api/realtime?action=broadcast', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    username: user.nickname || 'Migrated User',
+                    machine_id: deviceNo,
+                    material_type: wasteType,
+                    weight: recordWeight,
+                    user_id: user.id
+                  })
+                }).catch(() => { /* broadcast is non-critical */ });
             }
         }
 

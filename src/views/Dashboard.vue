@@ -9,9 +9,11 @@ import {
   WifiOff, Printer, Package, Clock, CheckCircle,
   QrCode, Wrench, ChevronRight, X, Eye, EyeOff,
   ClipboardList, Bell, Trash2, Wifi, Zap, Gauge,
-  Target, TrendingUp, Clock3, Calendar, Truck, RefreshCw
+  Target, TrendingUp, Clock3, Calendar, Truck, RefreshCw,
+  FileSpreadsheet, FileText, Award, Users, List, MapIcon
 } from 'lucide-vue-next';
 import StatsCard from '../components/StatsCard.vue';
+import QRScannerModal from '../components/QRScannerModal.vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { supabase } from '../services/supabase';
@@ -21,6 +23,52 @@ const router = useRouter();
 const machineStore = useMachineStore();
 const auth = useAuthStore();
 const { machines, loading: machineLoading, viewerHasAssignments } = storeToRefs(machineStore);
+
+// Command Center
+const openCommandCenter = () => {
+  window.open('/command-center', '_blank');
+};
+
+// View mode toggle (machines: list vs map)
+const machineViewMode = ref<'list' | 'map'>('list');
+
+const listViewClass = computed(() => 
+  machineViewMode.value === 'list' ? 'bg-emerald-50 text-emerald-600' : 'text-gray-500'
+);
+const mapViewClass = computed(() => 
+  machineViewMode.value === 'map' ? 'bg-emerald-50 text-emerald-600' : 'text-gray-500'
+);
+
+// Transaction modal state
+const showTransactionModal = ref(false);
+const selectedUserTransactions = ref<any[]>([]);
+const selectedUserName = ref('');
+
+const viewUserTransactions = async (user: any) => {
+  selectedUserName.value = user.name;
+  try {
+    const { data, error } = await supabase
+      .from('submission_reviews')
+      .select('id, device_no, total_weight, calculated_value, status, multiplier, created_at')
+      .eq('user_id', user.userId)
+      .eq('status', 'VERIFIED')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) throw error;
+    selectedUserTransactions.value = data || [];
+  } catch (error) {
+    console.error('Failed to fetch user transactions:', error);
+    selectedUserTransactions.value = [];
+  }
+  showTransactionModal.value = true;
+};
+
+const closeTransactionModal = () => {
+  showTransactionModal.value = false;
+  selectedUserTransactions.value = [];
+  selectedUserName.value = '';
+};
 
 const { 
   loading: statsLoading, 
@@ -56,6 +104,13 @@ const isCollector = computed(() => {
   return auth.role?.toUpperCase() === 'COLLECTOR';
 });
 
+// Admin-specific state
+const isSuperAdmin = computed(() => auth.role === 'SUPER_ADMIN');
+const isAdmin = computed(() => {
+  const role = auth.role?.toUpperCase();
+  return role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'MERCHANT';
+});
+
 // Collector-specific data
 const collectorTasks = ref<any[]>([]);
 const pendingVerifications = ref<any[]>([]);
@@ -69,6 +124,144 @@ const submittingIssue = ref(false);
 // Issue Report Fields
 const issueCategory = ref<string>('');
 const issueUrgency = ref<string>('Medium');
+
+// Certificate Stats
+const certificateStats = ref({
+  totalCertificatesIssued: 0,
+  targetCompletionRate: 0,
+  activeRecyclers: 0,
+  topUsers: [] as any[]
+});
+const certificateStatsLoading = ref(false);
+
+// Collector offloading state
+const offloadingTruck = ref(false);
+
+// QR Scanner / Collection state
+const showQRScanner = ref(false);
+const scannedDeviceNo = ref('');
+const scanningInProgress = ref(false);
+const activeCollection = ref<any>(null);
+const completingCollection = ref(false);
+
+// Handle QR code scan result
+const onQRScanned = async (scannedData: string) => {
+  scannedDeviceNo.value = scannedData;
+  
+  // Validate QR and start collection using new API
+  scanningInProgress.value = true;
+  try {
+    const response = await fetch('/api/collector/validate-qr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        machine_id: scannedData,
+        collector_id: auth.user?.id || auth.merchantId || 'collector-1',
+        collector_name: auth.user?.email || 'Collector',
+        collector_phone: ''
+      })
+    });
+
+    const result = await response.json();
+    if (result.success && result.valid) {
+      activeCollection.value = result.data;
+      showQRScanner.value = false;
+      scannedDeviceNo.value = '';
+      machineStore.fetchMachines();
+    } else {
+      alert(result.error || 'Invalid QR code or machine not found');
+    }
+  } catch (error) {
+    console.error('Scan error:', error);
+    alert('Failed to validate QR code. Please try again.');
+  } finally {
+    scanningInProgress.value = false;
+  }
+};
+
+// Scan QR code to start collection
+const scanQRMachine = async () => {
+  if (!scannedDeviceNo.value.trim()) {
+    alert('Please enter a device number');
+    return;
+  }
+
+  scanningInProgress.value = true;
+  try {
+    const response = await fetch('/api/collection/log-scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        collector_id: auth.user?.id || auth.merchantId || 'collector-1',
+        collector_name: auth.user?.email || 'Collector',
+        collector_phone: '',
+        device_no: scannedDeviceNo.value.trim()
+      })
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      activeCollection.value = result.data;
+      showQRScanner.value = false;
+      scannedDeviceNo.value = '';
+      machineStore.fetchMachines();
+    } else {
+      alert(result.error || 'Failed to scan machine');
+    }
+  } catch (error) {
+    console.error('Scan error:', error);
+    alert('Failed to scan. Please check the device number.');
+  } finally {
+    scanningInProgress.value = false;
+  }
+};
+
+// Complete the collection
+const completeCollection = async () => {
+  if (!activeCollection.value) return;
+
+  completingCollection.value = true;
+  try {
+    const response = await fetch('/api/collection/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        collector_id: auth.user?.id || auth.merchantId || 'collector-1',
+        collector_name: auth.user?.email || 'Collector',
+        collector_phone: '',
+        report_id: activeCollection.value.report_id,
+        final_weight: activeCollection.value.initial_weight
+      })
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      collectionStats.value.todayWeight += result.data.final_weight;
+      collectionStats.value.collectedCount += 1;
+      activeCollection.value = null;
+      machineStore.fetchMachines();
+      alert('Collection completed successfully!');
+    } else {
+      alert(result.error || 'Failed to complete collection');
+    }
+  } catch (error) {
+    console.error('Complete error:', error);
+    alert('Failed to complete collection.');
+  } finally {
+    completingCollection.value = false;
+  }
+};
+
+// Cancel active collection
+const cancelCollection = () => {
+  activeCollection.value = null;
+};
+
+// Open QR scanner modal
+const openQRScanner = () => {
+  showQRScanner.value = true;
+  scannedDeviceNo.value = '';
+};
 
 // Open issue modal with pre-selected machine
 const openIssueModal = (machineId?: number) => {
@@ -276,7 +469,7 @@ const fetchCriticalAlerts = async () => {
   // Sort by severity (critical first) then by time
   const severityOrder: Record<string, number> = { critical: 0, warning: 1 };
   criticalAlerts.value = alerts.sort((a, b) => {
-    const severityDiff = severityOrder[a.severity] - severityOrder[b.severity];
+    const severityDiff = (severityOrder[a.severity] ?? 1) - (severityOrder[b.severity] ?? 1);
     if (severityDiff !== 0) return severityDiff;
     return new Date(b.time).getTime() - new Date(a.time).getTime();
   }).slice(0, 9);
@@ -701,6 +894,70 @@ const fetchRecentSubmissionsWithUsers = async () => {
   }
 };
 
+// Fetch certificate stats for admin dashboard
+const fetchCertificateStats = async () => {
+  certificateStatsLoading.value = true;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/certificate-stats`, {
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const result = await response.json();
+    if (result.success && result.data) {
+      certificateStats.value = {
+        totalCertificatesIssued: result.data.totalCertificatesIssued || 0,
+        targetCompletionRate: result.data.completionRate || 0,
+        activeRecyclers: result.data.usersWhoCompleted || 0,
+        topUsers: []
+      };
+    }
+  } catch (error) {
+    console.error('Failed to fetch certificate stats:', error);
+  } finally {
+    certificateStatsLoading.value = false;
+  }
+};
+
+// Fetch top 10 users with most certificates
+const fetchTopCertificateUsers = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('user_certificates')
+      .select('user_id, created_at, users!inner(nickname, total_weight_recycled)')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const userMap = new Map();
+    data?.forEach((cert: any) => {
+      const userId = cert.user_id;
+      if (!userMap.has(userId)) {
+        userMap.set(userId, {
+          userId: userId,
+          name: cert.users?.nickname || 'Unknown',
+          totalWeight: cert.users?.total_weight_recycled || 0,
+          lastCertificateDate: cert.created_at
+        });
+      }
+    });
+
+    const topUsers = Array.from(userMap.values())
+      .sort((a, b) => new Date(b.lastCertificateDate).getTime() - new Date(a.lastCertificateDate).getTime())
+      .slice(0, 10);
+
+    certificateStats.value.topUsers = topUsers.length > 0 ? topUsers : [];
+  } catch (error) {
+    console.error('Failed to fetch top certificate users:', error);
+    certificateStats.value.topUsers = [];
+  }
+};
+
 // Approve or reject a submission
 const verifySubmission = async (id: string, status: 'VERIFIED' | 'REJECTED') => {
   try {
@@ -744,11 +1001,6 @@ const submitWithChecklist = async (status: 'VERIFIED' | 'REJECTED') => {
 // Quick action: Toggle machine status
 const toggleMachineStatus = async (machineId: number, currentStatus: boolean) => {
   await machineStore.toggleOfflineMode(machineId, currentStatus);
-};
-
-// Open QR scanner (placeholder - would integrate with camera)
-const openQRScanner = () => {
-  alert('QR Scanner: Point camera at machine QR code to identify. This feature requires camera access.');
 };
 
 const openBigData = () => {
@@ -872,6 +1124,11 @@ onMounted(async () => {
           fetchRecentSubmissionsWithUsers()
         ]);
         startShiftTimer();
+      } else if (isAdmin.value) {
+        await Promise.all([
+          fetchCertificateStats(),
+          fetchTopCertificateUsers()
+        ]);
       }
     }
   });
@@ -924,44 +1181,62 @@ onMounted(async () => {
            <AlertTriangle :size="16" />
            Report Issue
          </button>
-         <button 
-           v-if="isAgent"
-           @click="openQRScanner"
-           class="flex items-center gap-2 bg-white text-blue-600 px-4 py-2.5 rounded-xl hover:bg-blue-50 transition shadow-sm text-sm font-semibold border border-blue-100"
-         >
-           <QrCode :size="16" />
-           Scan QR
-         </button>
-         <button 
-           @click="openBigData"
-           class="flex items-center gap-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white px-5 py-2.5 rounded-xl hover:from-slate-700 hover:to-slate-800 transition shadow-lg shadow-slate-200 text-sm font-semibold"
-         >
-           <BarChart3 :size="16" />
-           Analytics
-         </button>
-       </div>
-    </div>
-    
-    <div v-if="statsLoading && machines.length === 0" class="flex h-64 items-center justify-center">
-      <div class="text-gray-400 animate-pulse font-medium">Loading Dashboard...</div>
-    </div>
-
-    <div v-else>
-      <!-- AGENT Stats Cards -->
-      <div v-if="isAgent" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatsCard title="Active Alerts" :value="activeAlertsCount" color="amber" description="Requires Immediate Action">
-          <template #icon><AlertTriangle :size="24" /></template>
-        </StatsCard>
-        <StatsCard title="Near Capacity" :value="nearCapacityCount" color="amber" description=">80% Fill Level">
-          <template #icon><Activity :size="24" /></template>
-        </StatsCard>
-        <StatsCard title="Online Units" :value="machineLoading ? '...' : onlineMachinesCount" color="green" description="Ready for Use">
-          <template #icon><Server :size="24" /></template>
-        </StatsCard>
-        <StatsCard title="Incentives Issued" :value="formatNumber(incentivesIssued)" color="blue" description="Points Distributed Today">
-          <template #icon><Coins :size="24" /></template>
-        </StatsCard>
+          <button 
+            v-if="isCollector"
+            @click="openQRScanner"
+            class="flex items-center gap-2 bg-white text-blue-600 px-4 py-2.5 rounded-xl hover:bg-blue-50 transition shadow-sm text-sm font-semibold border border-blue-100"
+          >
+            <QrCode :size="16" />
+            Scan Machine
+          </button>
+          <button 
+            v-if="isAgent"
+            @click="openQRScanner"
+            class="flex items-center gap-2 bg-white text-blue-600 px-4 py-2.5 rounded-xl hover:bg-blue-50 transition shadow-sm text-sm font-semibold border border-blue-100"
+          >
+            <QrCode :size="16" />
+            Scan QR
+          </button>
+          <button 
+            @click="openBigData"
+            class="flex items-center gap-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white px-5 py-2.5 rounded-xl hover:from-slate-700 hover:to-slate-800 transition shadow-lg shadow-slate-200 text-sm font-semibold"
+          >
+            <BarChart3 :size="16" />
+            Analytics
+          </button>
+          <!-- Live Command Center Button -->
+          <button 
+            @click="openCommandCenter"
+            class="flex items-center gap-2 bg-slate-900 text-emerald-400 px-4 py-2.5 rounded-xl hover:bg-slate-800 transition shadow-lg text-sm font-semibold border-2 border-emerald-500"
+            style="box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);"
+          >
+            <span class="h-2.5 w-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
+            Open Live Command Center
+          </button>
+        </div>
       </div>
+
+      <!-- Dashboard Content -->
+      <div v-if="statsLoading && machines.length === 0" class="flex h-64 items-center justify-center">
+        <div class="text-gray-400 animate-pulse font-medium">Loading Dashboard...</div>
+      </div>
+
+      <div v-else>
+        <!-- AGENT Stats Cards -->
+        <div v-if="isAgent" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <StatsCard title="Active Alerts" :value="activeAlertsCount" color="amber" description="Requires Immediate Action">
+            <template #icon><AlertTriangle :size="24" /></template>
+          </StatsCard>
+          <StatsCard title="Near Capacity" :value="nearCapacityCount" color="amber" description=">80% Fill Level">
+            <template #icon><Activity :size="24" /></template>
+          </StatsCard>
+          <StatsCard title="Online Units" :value="machineLoading ? '...' : onlineMachinesCount" color="green" description="Ready for Use">
+            <template #icon><Server :size="24" /></template>
+          </StatsCard>
+          <StatsCard title="Incentives Issued" :value="formatNumber(incentivesIssued)" color="blue" description="Points Distributed Today">
+            <template #icon><Coins :size="24" /></template>
+          </StatsCard>
+        </div>
 
       <!-- Non-AGENT and Non-COLLECTOR Stats Cards (Admin/Merchant view) -->
       <div v-else-if="!isAgent && !isCollector" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -977,6 +1252,132 @@ onMounted(async () => {
         <StatsCard title="Recycled Weight" :value="`${formatNumber(totalWeight)} kg`" color="purple" description="Environmental Impact">
           <template #icon><Scale :size="24" /></template>
         </StatsCard>
+      </div>
+
+      <!-- Environmental Impact Card (Admin/Merchant only) -->
+      <div v-if="!isAgent && !isCollector && isAdmin" class="bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-2xl p-6 shadow-lg mb-8">
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between">
+          <div class="mb-6 lg:mb-0">
+            <div class="flex items-center mb-2">
+              <Recycle class="text-white mr-2" :size="24" />
+              <h2 class="text-xl font-bold text-white">Environmental Impact</h2>
+            </div>
+            <p class="text-emerald-100 text-sm">CO2 Saved (2026-02-27 to 2026-03-31)</p>
+          </div>
+          
+          <div class="flex flex-col sm:flex-row gap-6 lg:ml-auto">
+            <div class="text-center lg:text-right">
+              <p class="text-emerald-100 text-xs uppercase tracking-wide mb-1">CO2 Saved</p>
+              <p class="text-3xl font-bold text-white">0.0 kg CO2</p>
+            </div>
+            <div class="text-center lg:text-right">
+              <p class="text-emerald-100 text-xs uppercase tracking-wide mb-1">Trees Equivalent</p>
+              <p class="text-3xl font-bold text-white">0.0 Trees</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 pt-4 border-t border-emerald-400/30">
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="flex items-center gap-2">
+              <label class="text-emerald-100 text-sm">Custom Range</label>
+              <select class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50">
+                <option class="text-gray-800">Last 7 Days</option>
+                <option class="text-gray-800">Last 30 Days</option>
+                <option class="text-gray-800">Last 90 Days</option>
+                <option class="text-gray-800" selected>Custom Range</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-100 text-sm">From</span>
+              <input 
+                type="date" 
+                class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 [color-scheme:light]"
+              />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-100 text-sm">To</span>
+              <input 
+                type="date" 
+                class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 [color-scheme:light]"
+              />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <label class="text-emerald-100 text-sm">RVM Machine</label>
+              <select class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 max-w-[200px]">
+                <option class="text-gray-800" value="">All Machines</option>
+                <option v-for="machine in machines" :key="machine.id" class="text-gray-800" :value="machine.id">
+                  {{ machine.name || machine.deviceNo }}
+                </option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2 ml-auto">
+              <button class="flex items-center gap-2 bg-white text-emerald-700 hover:bg-emerald-50 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                <FileSpreadsheet :size="16" />
+                Export Excel
+              </button>
+              <button class="flex items-center gap-2 bg-emerald-700 text-white hover:bg-emerald-800 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                <FileText :size="16" />
+                Download PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Certificate Stats Overview (Admin/Merchant only) -->
+      <div v-if="!isAgent && !isCollector && isAdmin" class="mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <div class="flex items-center gap-4">
+              <div class="h-12 w-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-200">
+                <Award :size="24" class="text-white" />
+              </div>
+              <div>
+                <p class="text-sm text-gray-500">Total Certificates Issued</p>
+                <p class="text-2xl font-bold text-gray-900">
+                  {{ certificateStatsLoading ? '...' : certificateStats.totalCertificatesIssued }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <div class="flex items-center gap-4">
+              <div class="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-200">
+                <Target :size="24" class="text-white" />
+              </div>
+              <div>
+                <p class="text-sm text-gray-500">Target Completion Rate</p>
+                <p class="text-2xl font-bold text-gray-900">
+                  {{ certificateStatsLoading ? '...' : certificateStats.targetCompletionRate }}%
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Certificate Stats for SUPER_ADMIN -->
+          <div v-if="isSuperAdmin" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-green-300 transition-colors cursor-pointer" @click="$router.push('/live-recycler-monitor')">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-4">
+                <div class="h-12 w-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-200">
+                  <Award :size="24" class="text-white" />
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Active Recyclers</p>
+                  <p class="text-lg font-bold text-gray-900">
+                    {{ certificateStatsLoading ? '...' : certificateStats.activeRecyclers }}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight :size="24" class="text-gray-400" />
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- AGENT: Collection & Impact Data -->
@@ -1691,71 +2092,10 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
-          </div>
+</div>
           <div v-if="machines.length === 0" class="text-center py-8 text-gray-400">
             <Server :size="32" class="mx-auto mb-2"/>
             <p class="text-sm">No machines assigned</p>
-          </div>
-        </div>
-
-        <!-- Live Verification Queue -->
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <div class="flex items-center justify-between mb-6">
-            <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                <Eye :size="18"/>
-              </div>
-              Pending Verifications
-              <span v-if="pendingVerifications.length > 0" class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded-full animate-pulse">
-                {{ pendingVerifications.length }} New
-              </span>
-            </h3>
-            <button @click="router.push('/submissions')" class="text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              View All <ChevronRight :size="16"/>
-            </button>
-          </div>
-          
-          <div v-if="pendingVerifications.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div 
-              v-for="item in pendingVerifications" 
-              :key="item.id"
-              class="p-4 rounded-xl border border-gray-200 bg-gray-50/50 hover:bg-white hover:shadow-md transition-all"
-            >
-              <div class="flex gap-3 mb-3">
-                <div class="w-16 h-16 rounded-lg bg-gray-200 overflow-hidden shrink-0">
-                  <img v-if="item.photo_url" :src="item.photo_url" class="w-full h-full object-cover" alt="Submission"/>
-                  <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
-                    <Recycle :size="24"/>
-                  </div>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-bold text-gray-900 truncate">{{ item.users?.nickname || 'Guest' }}</p>
-                  <p class="text-xs text-gray-500 capitalize">{{ item.waste_type }}</p>
-                  <p class="text-lg font-bold text-green-600">{{ item.api_weight }} kg</p>
-                </div>
-              </div>
-              <div class="flex gap-2">
-                <button 
-                  @click="openChecklist(item.id)"
-                  class="flex-1 py-2.5 bg-green-500 text-white text-sm font-bold rounded-lg hover:bg-green-600 transition flex items-center justify-center gap-1"
-                >
-                  <CheckCircle :size="14"/> Verify
-                </button>
-                <button 
-                  @click="verifySubmission(item.id, 'REJECTED')"
-                  class="flex-1 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-bold rounded-lg hover:bg-red-50 transition"
-                >
-                  Reject
-                </button>
-              </div>
-            </div>
-          </div>
-          <div v-else class="text-center py-12 bg-gray-50 rounded-xl">
-            <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center">
-              <CheckCircle :size="32"/>
-            </div>
-            <p class="font-semibold text-gray-900">All verified!</p>
-            <p class="text-sm text-gray-500">No pending verifications at the moment.</p>
           </div>
         </div>
 
@@ -1937,6 +2277,51 @@ onMounted(async () => {
     </div>
   </div>
 
+<!-- QR Scanner Modal -->
+  <QRScannerModal 
+    :show='showQRScanner' 
+    @close='showQRScanner = false'
+    @scan='onQRScanned'
+  />
+
+  <!-- Active Collection Panel -->
+  <div v-if="activeCollection" class="fixed bottom-0 left-0 right-0 bg-gradient-to-r from-blue-600 to-blue-500 text-white p-4 shadow-lg z-40">
+    <div class="max-w-4xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+          <QrCode :size="24" />
+        </div>
+        <div>
+          <p class="font-bold text-lg">{{ activeCollection.machine_name }}</p>
+          <p class="text-sm text-blue-100">{{ activeCollection.device_no }} • Started: {{ new Date(activeCollection.start_time).toLocaleTimeString() }}</p>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-4">
+        <div class="text-right">
+          <p class="text-sm text-blue-100">Current Weight</p>
+          <p class="text-2xl font-bold">{{ activeCollection.initial_weight?.toFixed(1) || 0 }} kg</p>
+        </div>
+        
+        <button 
+          @click="completeCollection"
+          :disabled="completingCollection"
+          class="px-6 py-3 bg-white text-blue-600 font-bold rounded-lg hover:bg-blue-50 disabled:opacity-50 transition flex items-center gap-2"
+        >
+          <CheckCircle :size="18" />
+          {{ completingCollection ? 'Completing...' : 'Complete' }}
+        </button>
+        
+        <button 
+          @click="cancelCollection"
+          class="px-4 py-3 bg-white/20 text-white font-medium rounded-lg hover:bg-white/30 transition"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Verification Checklist Modal (for Collectors) -->
   <div v-if="showChecklistModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
     <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
@@ -1988,6 +2373,72 @@ onMounted(async () => {
         >
           Approve
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transaction History Modal (for SUPER_ADMIN) -->
+  <div v-if="showTransactionModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeTransactionModal">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900">Transaction History</h3>
+          <p class="text-sm text-gray-500">{{ selectedUserName }}</p>
+        </div>
+        <button @click="closeTransactionModal" class="text-gray-400 hover:text-gray-600">
+          <X :size="20"/>
+        </button>
+      </div>
+      <div class="overflow-auto max-h-[60vh]">
+        <table class="w-full">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Machine</th>
+              <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Weight (kg)</th>
+              <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Points</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Multiplier</th>
+              <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="trans in selectedUserTransactions" :key="trans.id" class="hover:bg-gray-50">
+              <td class="px-6 py-3 text-sm text-gray-600">
+                {{ new Date(trans.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) }}
+              </td>
+              <td class="px-6 py-3 text-sm text-gray-900">
+                {{ trans.device_no || 'N/A' }}
+              </td>
+              <td class="px-6 py-3 text-sm text-gray-900 text-right">
+                {{ trans.total_weight?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+              </td>
+              <td class="px-6 py-3 text-sm text-green-600 text-right font-medium">
+                {{ trans.calculated_value?.toLocaleString() }}
+              </td>
+              <td class="px-6 py-3 text-center">
+                <span class="px-2 py-0.5 text-xs font-medium rounded-full"
+                  :class="{
+                    'bg-purple-100 text-purple-700': trans.multiplier >= 3,
+                    'bg-blue-100 text-blue-700': trans.multiplier >= 2 && trans.multiplier < 3,
+                    'bg-gray-100 text-gray-700': trans.multiplier < 2
+                  }"
+                >
+                  {{ trans.multiplier || 1 }}x
+                </span>
+              </td>
+              <td class="px-6 py-3 text-center">
+                <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                  {{ trans.status }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="selectedUserTransactions.length === 0">
+              <td colspan="6" class="px-6 py-8 text-center text-gray-500">
+                No transactions found
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

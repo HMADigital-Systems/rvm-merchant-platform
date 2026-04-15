@@ -11,6 +11,12 @@ export function useUserList() {
 
   // 1. Fetch Users + Wallet for Current Merchant
   const fetchUsers = async () => {
+    // Wait for auth to initialize before checking permissions
+    if (auth.loading) {
+      setTimeout(fetchUsers, 100);
+      return;
+    }
+
     // 1. Define Platform Owner Logic
     const isPlatformOwner = auth.role === 'SUPER_ADMIN' && !auth.merchantId;
     const isViewer = auth.role === 'VIEWER';
@@ -104,11 +110,18 @@ export function useUserList() {
                 u.display_weight = Number(u.total_weight || 0);
             }
 
+            // Get last verified submission date
+            const verifiedReviews = userReviews.filter((r: any) => r.status === 'VERIFIED');
+            const lastVerifiedSubmit = verifiedReviews.length > 0 
+                ? verifiedReviews.sort((a: any, b: any) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime())[0]?.submitted_at 
+                : null;
+
             return {
                 ...u,
                 balance: Number(currentBalance.toFixed(2)),
                 earnings: Number(totalEarned.toFixed(2)),
-                total_weight: Number(u.display_weight.toFixed(2)), // Normalized field for UI
+                total_weight: Number(u.display_weight.toFixed(2)),
+                last_verified_submit: lastVerifiedSubmit,
             };
         });
 

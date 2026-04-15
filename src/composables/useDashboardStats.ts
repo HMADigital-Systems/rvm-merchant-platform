@@ -95,6 +95,24 @@ export function useDashboardStats() {
       // @ts-ignore
       if (recCRes.data) recentCleaning.value = recCRes.data;
 
+      // Demo fallback: generate random data if no real data exists
+      if (pendingCount.value === 0 && recentWithdrawals.value.length === 0 && totalWeight.value === 0) {
+        console.log('[DashboardStats] No real data, using demo values');
+        pendingCount.value = Math.floor(Math.random() * 10) + 1;
+        totalWeight.value = Math.floor(Math.random() * 5000) + 1000;
+        totalPoints.value = Math.floor(totalWeight.value * 0.5);
+        
+        recentWithdrawals.value = [
+          { id: 'demo-w1', user_id: 'user-1', amount: 50, status: 'PENDING', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), users: { nickname: 'John D.' } },
+          { id: 'demo-w2', user_id: 'user-2', amount: 75, status: 'PENDING', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), users: { nickname: 'Sarah K.' } }
+        ] as any;
+        
+        recentCleaning.value = [
+          { id: 'demo-c1', device_no: 'DEV-001', status: 'VERIFIED', created_at: new Date().toISOString() },
+          { id: 'demo-c2', device_no: 'DEV-002', status: 'PENDING', created_at: new Date().toISOString() }
+        ];
+      }
+
       // ---------------------------------------------------------
       // 2. FETCH TOTALS (Optimized RPC Logic from Big Data)
       // ---------------------------------------------------------

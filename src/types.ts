@@ -35,11 +35,13 @@ export const WithdrawalStatus = {
 
 export type WithdrawalStatus = typeof WithdrawalStatus[keyof typeof WithdrawalStatus];
 
-export type SubmissionStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
-
 // ==========================================
 // 3. DATABASE INTERFACES
 // ==========================================
+
+export type UserStatus = 'ACTIVE' | 'WARNED' | 'BLOCKED' | 'UNDER_REVIEW';
+
+export type UserRole = 'user' | 'investor' | 'collector' | 'admin' | 'SUPER_ADMIN';
 
 export interface User {
   id: string;
@@ -47,18 +49,24 @@ export interface User {
   phone: string;
   email?: string | null;
   
-  // Global stats (optional, as specific data is now in MerchantWallet)
   lifetime_integral: number;
   total_weight?: number;
   
   created_at: string;
+  updated_at?: string;
+  last_active_at?: string;
   
-  // Hybrid Sync Fields
+  status?: UserStatus;
+  
   nickname?: string | null;
   avatar_url?: string | null;
   card_no?: string | null;
   vendor_internal_id?: string | null;
   last_synced_at?: string | null;
+  
+  // Investor fields
+  role?: UserRole;
+  company_name?: string | null;
 }
 
 export interface UserProfile {
@@ -92,13 +100,13 @@ export interface Withdrawal {
 }
 
 export interface Machine {
-  id: number; // Changed to number to match BigInt in DB, or keep string if using string ID
-  device_no: string; // Standardized to snake_case matches DB (check your DB column name)
-  deviceNo?: string; // Legacy support for API mapping
+  id: number;
+  device_no: string;
+  deviceNo?: string;
   
-  merchant_id?: string; // SaaS: Who owns this machine?
+  merchant_id?: string;
   
-  name: string;      // Replaces deviceName
+  name: string;
   address?: string;
   location_name?: string;
   
@@ -107,12 +115,18 @@ export interface Machine {
   zone?: string;
   is_manual_offline: boolean;
 
-  // NEW: Rates are now here (Source of Truth)
+  // Rates
   config_bin_1: string;
   config_bin_2: string;
   rate_plastic: number;
   rate_paper: number;
   rate_uco: number;
+  
+  // Investor fields
+  investor_id?: string | null;
+  investment_value?: number | null;
+  contract_start_date?: string | null;
+  contract_end_date?: string | null;
   
   // Joined Data
   merchant?: Merchant; 
@@ -133,6 +147,17 @@ export interface ViewerMachineAssignment {
     zone: string;
   };
 }
+
+// Fraud detection constants
+export const FRAUD_DETECTION = {
+  MAX_ITEM_WEIGHT: 500, // grams
+  MAX_DAILY_SUBMISSIONS: 50 // per user per day
+} as const;
+
+export type SubmissionReviewStatus = 'Pending' | 'Approved' | 'Flagged' | 'Rejected';
+
+// Legacy status type (used in existing code)
+export type SubmissionStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
 
 export interface SubmissionReview {
   id: string;
@@ -160,7 +185,10 @@ export interface SubmissionReview {
   calculated_points?: number; // Legacy: Points
   machine_given_points?: number;
   
-  status: SubmissionStatus;
+  // Status - Updated with fraud detection
+  status: 'Pending' | 'Approved' | 'Flagged' | 'Rejected';
+  is_suspicious?: boolean;
+  fraud_reason?: string;
   submitted_at: string;
   
   // Joined Data

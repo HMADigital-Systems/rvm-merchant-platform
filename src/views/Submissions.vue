@@ -2,11 +2,15 @@
 import { onMounted, ref, watch } from 'vue';
 import { useSubmissionReviews } from '../composables/useSubmissionReviews';
 import { useAuthStore } from '../stores/auth';
+import { useMachineStore } from '../stores/machines';
 import SubmissionCorrectionModal from '../components/SubmissionCorrectionModal.vue';
 import SubmissionCleanupModal from '../components/SubmissionCleanupModal.vue';
 import SubmissionFilters from '../components/SubmissionFilters.vue';
 import SimpleConfirmModal from '../components/SimpleConfirmModal.vue';
-import { RefreshCw, Check, Edit3, Clock, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-vue-next';
+import { RefreshCw, Check, Edit3, Clock, Trash2, X, ChevronLeft, ChevronRight, FileSpreadsheet, FileText } from 'lucide-vue-next';
+import * as XLSX from 'xlsx';
+
+const { machines: machineList, fetchMachines } = useMachineStore();
 
 // Use the fat composable
 const { 
@@ -17,16 +21,16 @@ const {
   showCleanupModal,
   selectedReview,
   modalStartInReject,
-  activeStatusTab,
   searchFilters,
   currentPage,
   itemsPerPage,
+  activeStatusTab,
   
   // Computed Data
   paginatedReviews,
   totalPages,
   filteredReviews,
-
+ 
   // Actions
   fetchReviews, 
   harvestNewSubmissions,
@@ -74,7 +78,68 @@ const formatDate = (dateString: string) => {
   });
 };
 
-onMounted(() => fetchReviews());
+onMounted(async () => {
+  await fetchMachines();
+  fetchReviews();
+  startRealtimePolling();
+});
+
+// Real-time updates (Socket.io style)
+const newItemId = ref<string | null>(null);
+let lastSubmissionId = '';
+let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+const startRealtimePolling = () => {
+  if (pollInterval) return;
+  
+  pollInterval = setInterval(async () => {
+    try {
+      const response = await fetch('/api/realtime?action=subscribe&limit=1');
+      const result = await response.json();
+      
+      if (result.success && result.events?.length > 0) {
+        const latest = result.events[0];
+        
+        // New submission found!
+        if (latest.id !== lastSubmissionId && lastSubmissionId) {
+          // Add to beginning of array like unshift()
+          const newReview = {
+            id: latest.id || `rt-${Date.now()}`,
+            vendor_record_id: latest.id || `RT-${Date.now()}`,
+            user_id: latest.user_id,
+            device_no: latest.machine_id,
+            waste_type: latest.material_type,
+            api_weight: latest.weight,
+            calculated_value: 0,
+            rate_per_kg: 0.5,
+            status: 'PENDING' as const,
+            submitted_at: latest.timestamp || new Date().toISOString(),
+            users: { 
+              nickname: latest.username || 'Guest User',
+              avatar_url: '',
+              phone: ''
+            }
+          };
+          
+          // Insert at the beginning of filteredReviews
+          filteredReviews.value.unshift(newReview);
+          
+          // Trigger animation
+          newItemId.value = newReview.id;
+          
+          // Clear animation flag after 2 seconds
+          setTimeout(() => {
+            newItemId.value = null;
+          }, 2000);
+        }
+        
+        lastSubmissionId = latest.id;
+      }
+    } catch (e) {
+      // Silent fail for polling
+    }
+  }, 5000); // Poll every 5 seconds
+};
 
 // Watch for auth to finish loading, then refetch
 watch(() => auth.loading, (isLoading) => {
@@ -91,6 +156,83 @@ watch(() => auth.role, (newRole) => {
     fetchReviews();
   }
 });
+
+// Export functions
+const exportToExcel = () => {
+  const data = filteredReviews.value.map(item => ({
+    'Submitted At': item.submitted_at,
+    'User': item.users?.nickname || 'Guest User',
+    'Phone': item.users?.phone || item.phone || '',
+    'Machine ID': item.device_no,
+    'Waste Type': item.waste_type,
+    'User Weight (kg)': item.api_weight,
+    'Bin Level (kg)': item.bin_weight_snapshot || 0,
+    'Theoretical Weight (kg)': item.theoretical_weight,
+    'Warehouse Weight (kg)': item.warehouse_weight || '',
+    'Confirmed Weight (kg)': item.confirmed_weight || '',
+    'Points': item.calculated_value || (item.api_weight * item.rate_per_kg).toFixed(2),
+    'Status': item.status
+  }));
+
+  // Calculate totals by waste type
+  const totals: Record<string, number> = {};
+  filteredReviews.value.forEach(item => {
+    const type = item.waste_type || 'Other';
+    if (!totals[type]) totals[type] = 0;
+    totals[type] += item.api_weight || 0;
+  });
+
+  // Add summary rows
+  data.push({} as any);
+  data.push({ 'Waste Type': 'TOTAL BY MATERIAL', 'User Weight (kg)': '' } as any);
+  Object.keys(totals).forEach(type => {
+    data.push({ 'Waste Type': `${type} Total`, 'User Weight (kg)': totals[type] } as any);
+  });
+  data.push({ 'Waste Type': 'GRAND TOTAL', 'User Weight (kg)': Object.values(totals).reduce((a, b) => a + b, 0) } as any);
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Submissions');
+  XLSX.writeFile(wb, `submissions_${activeStatusTab}_${new Date().toISOString().split('T')[0]}.xlsx`);
+};
+
+const exportToPdf = () => {
+  const printContent = document.querySelector('.bg-white.rounded-2xl.shadow-sm.border.border-gray-100');
+  if (!printContent) return;
+
+  // Calculate totals
+  const totals: Record<string, number> = {};
+  filteredReviews.value.forEach(item => {
+    const type = item.waste_type || 'Other';
+    if (!totals[type]) totals[type] = 0;
+    totals[type] += item.api_weight || 0;
+  });
+
+  const totalsDiv = document.createElement('div');
+  totalsDiv.style.cssText = 'margin-top: 20px; padding: 15px; background: #f3f4f6; border-radius: 8px;';
+  let totalsHtml = '<h3 style="margin-bottom: 10px;">Total Weight by Material</h3>';
+  totalsHtml += '<table style="width: 100%; border-collapse: collapse;"><tr style="background: #e5e7eb;"><th style="padding: 8px; border: 1px solid #d1d5db; text-align: left;">Material Type</th><th style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">Total Weight (kg)</th></tr>';
+  Object.keys(totals).forEach(type => {
+    totalsHtml += `<tr><td style="padding: 8px; border: 1px solid #d1d5db;">${type}</td><td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${(totals[type] || 0).toFixed(2)}</td></tr>`;
+  });
+  const grandTotal = Object.values(totals).reduce((a, b) => a + b, 0);
+  totalsHtml += `<tr style="background: #d1d5db; font-weight: bold;"><td style="padding: 8px; border: 1px solid #d1d5db;">GRAND TOTAL</td><td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${grandTotal.toFixed(2)}</td></tr></table>`;
+  totalsDiv.innerHTML = totalsHtml;
+
+  const clonedContent = (printContent as HTMLElement).cloneNode(true) as HTMLElement;
+  clonedContent.appendChild(totalsDiv);
+
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write('<html><head><title>Submissions Export</title>');
+    printWindow.document.write('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(clonedContent.innerHTML);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.print();
+  }
+};
 </script>
 
 <template>
@@ -102,6 +244,24 @@ watch(() => auth.role, (newRole) => {
       </div>
 
       <div class="flex gap-3">
+        <button 
+          @click="exportToExcel"
+          class="flex items-center px-4 py-2 border border-green-200 text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-all"
+          title="Export to Excel"
+        >
+          <FileSpreadsheet :size="18" class="mr-2" />
+          Excel
+        </button>
+
+        <button 
+          @click="exportToPdf"
+          class="flex items-center px-4 py-2 border border-blue-200 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-all"
+          title="Export to PDF (Print)"
+        >
+          <FileText :size="18" class="mr-2" />
+          PDF
+        </button>
+
         <button 
           @click="showCleanupModal = true"
           class="flex items-center px-4 py-2 border border-red-200 text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-all active:scale-95"
@@ -132,13 +292,13 @@ watch(() => auth.role, (newRole) => {
       </div>
     </div>
 
-    <SubmissionFilters @update:filters="(val) => searchFilters = val" />
+    <SubmissionFilters :machines="machineList" @update:filters="(val) => searchFilters = val" />
 
     <div class="flex space-x-1 bg-gray-100 p-1 rounded-xl w-fit">
-      <button v-for="f in ['PENDING', 'VERIFIED', 'REJECTED']" :key="f" 
+      <button v-for="f in ['PENDING', 'FLAGGED', 'APPROVED', 'REJECTED']" :key="f" 
         @click="activeStatusTab = f" 
         :class="`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeStatusTab === f ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-900'}`">
-        {{ f }}
+        {{ f === 'APPROVED' ? 'VERIFIED' : f }}
       </button>
     </div>
 
@@ -159,7 +319,7 @@ watch(() => auth.role, (newRole) => {
               <th class="px-6 py-4 text-center text-gray-500">Bin Lvl</th>
               <th class="px-6 py-4 text-center text-gray-400">Theo. Wgt</th>
               <th class="px-6 py-4 text-center font-bold text-amber-700">Warehouse Wgt</th> 
-              <th v-if="activeStatusTab === 'VERIFIED'" class="px-6 py-4 text-center font-bold text-green-700">Confirmed Wgt</th>
+              <th v-if="activeStatusTab === 'VERIFIED' || activeStatusTab === 'APPROVED'" class="px-6 py-4 text-center font-bold text-green-700">Confirmed Wgt</th>
               <th class="px-6 py-4 text-center">Points</th> 
               
               <th class="px-6 py-4 text-center sticky right-0 z-20 bg-gray-50 border-l border-gray-200 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
@@ -168,9 +328,17 @@ watch(() => auth.role, (newRole) => {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
-            <tr v-if="paginatedReviews.length === 0"><td colspan="13" class="p-8 text-center text-gray-400">No submissions found.</td></tr>
+            <tr v-if="paginatedReviews.length === 0"><td colspan="14" class="p-8 text-center text-gray-400">No submissions found.</td></tr>
             
-            <tr v-for="item in paginatedReviews" :key="item.id" class="hover:bg-gray-50 transition-colors group">
+            <tr 
+              v-for="item in paginatedReviews" 
+              :key="item.id" 
+              :class="[
+                'hover:bg-gray-50 transition-colors group',
+                item.is_suspicious ? 'bg-red-50' : '',
+                newItemId === item.id ? 'new-submission-row' : ''
+              ]"
+            >
               <td class="px-6 py-4">
                 <div class="flex items-center text-sm text-gray-700">
                   <Clock :size="14" class="mr-1.5 text-gray-400" />
@@ -210,20 +378,31 @@ watch(() => auth.role, (newRole) => {
                 </div>
               </td>
 
-              <td class="px-6 py-4 text-center"><span class="text-lg font-bold text-gray-900">{{ item.api_weight }}</span><span class="text-xs text-gray-500 ml-1">kg</span></td>
+              <td class="px-6 py-4 text-center">
+                <div class="relative inline-block">
+                  <span :class="`text-lg font-bold ${item.is_suspicious ? 'text-red-600' : 'text-gray-900'}`">
+                    {{ item.api_weight }}
+                  </span><span class="text-xs text-gray-500 ml-1">kg</span>
+                  <span v-if="item.is_suspicious && item.fraud_reason" 
+                    class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 cursor-help" 
+                    :title="item.fraud_reason">
+                    ⚠️ {{ item.fraud_reason }}
+                  </span>
+                </div>
+              </td>
               <td class="px-6 py-4 text-center">
                 <span v-if="(item.bin_weight_snapshot || 0) > 0" class="font-mono text-sm text-gray-600 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">{{ item.bin_weight_snapshot }} kg</span>
                 <span v-else class="text-gray-300">-</span>
               </td>
               <td class="px-6 py-4 text-center"><span class="text-sm text-gray-400 font-mono">{{ item.theoretical_weight }} kg</span></td>
               <td class="px-6 py-4 text-center"><span class="font-bold text-amber-700">{{ item.warehouse_weight ? item.warehouse_weight + ' kg' : '-' }}</span></td>
-              <td v-if="activeStatusTab === 'VERIFIED'" class="px-6 py-4 text-center"><span class="font-bold text-green-600">{{ item.confirmed_weight }} kg</span></td>
+              <td v-if="activeStatusTab === 'APPROVED' || item.status === 'Approved'" class="px-6 py-4 text-center"><span class="font-bold text-green-600">{{ item.confirmed_weight }} kg</span></td>
               <td class="px-6 py-4 text-center">
-                <div v-if="item.status === 'VERIFIED'">
+                <div v-if="item.status === 'Approved'">
                   <span class="text-lg font-bold text-green-600">{{ item.calculated_value }}</span>
                   <div class="text-[10px] text-gray-400">Final</div>
                 </div>
-                
+                <div v-else-if="item.is_suspicious" class="text-sm font-bold text-red-400">-</div>
                 <div v-else class="flex flex-col items-center">
                   <span class="text-sm font-bold text-gray-700">{{ (item.api_weight * item.rate_per_kg).toFixed(2) }}</span>
                   <div v-if="item.machine_given_points" class="text-[10px] mt-1 flex items-center gap-1">
@@ -234,12 +413,14 @@ watch(() => auth.role, (newRole) => {
               </td>
 
               <td class="px-6 py-4 text-center sticky right-0 z-10 bg-white group-hover:bg-gray-50 transition-colors border-l border-gray-200 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
-                <div v-if="item.status === 'PENDING'" class="flex justify-center gap-2">
-                  <button @click="triggerFastConfirm(item)" class="p-1.5 bg-green-50 text-green-700 rounded hover:bg-green-100 border border-green-200" title="Confirm"><Check :size="16" /></button>
+                <!-- eslint-disable-next-line vue/no-v-text-v-html-on-component -->
+                <div v-show="['PENDING', 'Pending', 'Flagged'].includes(item.status)" class="flex justify-center gap-2">
+                  <button @click="triggerFastConfirm(item)" class="p-1.5 bg-green-50 text-green-700 rounded hover:bg-green-100 border border-green-200" title="Verify"><Check :size="16" /></button>
                   <button @click="openReviewModal(item, false)" class="p-1.5 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 border border-amber-200" title="Correct"><Edit3 :size="16" /></button>
                   <button @click="openReviewModal(item, true)" class="p-1.5 bg-red-50 text-red-700 rounded hover:bg-red-100 border border-red-200" title="Reject"><X :size="16" /></button>
                 </div>
-                <span v-else :class="`px-2.5 py-1 rounded-full text-xs font-bold ${item.status === 'VERIFIED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`">
+                <!-- eslint-disable-next-line vue/no-v-text-v-html-on-component -->
+                <span v-show="!['PENDING', 'Pending', 'Flagged'].includes(item.status)" :class="`px-2.5 py-1 rounded-full text-xs font-bold ${['Approved', 'VERIFIED'].includes(item.status) ? 'bg-green-100 text-green-700' : ['Rejected', 'REJECTED'].includes(item.status) ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`">
                   {{ item.status }}
                 </span>
               </td>
@@ -314,3 +495,26 @@ watch(() => auth.role, (newRole) => {
     />
   </div>
 </template>
+
+<style scoped>
+/* New submission row animation - fade in + slide down */
+@keyframes slideDownFade {
+  0% {
+    opacity: 0;
+    transform: translateY(-20px);
+    background-color: rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    background-color: rgba(16, 185, 129, 0.15);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    background-color: transparent;
+  }
+}
+
+.new-submission-row {
+  animation: slideDownFade 1.5s ease-out forwards;
+}
+</style>

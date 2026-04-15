@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
+import { detectVelocityFraud } from './velocity-fraud-middleware';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL!;
 // 🔴 WAS: const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY!;
@@ -171,7 +172,125 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const machinePoints = Number(integral || 0);
 
       // ------------------------------------------------------------------
-      // 4. SAVE RECORD (Force PENDING)
+      // 3.5 FRAUD DETECTION
+      // ------------------------------------------------------------------
+      const MAX_ITEM_WEIGHT = 500; // grams
+      const MAX_DAILY_SUBMISSIONS = 50;
+
+      let isSuspicious = false;
+      let fraudReason: string | null = null;
+      let submissionStatus = 'PENDING';
+
+      // Check weight limit
+      if (weight > MAX_ITEM_WEIGHT) {
+        isSuspicious = true;
+        fraudReason = 'Weight Limit Exceeded';
+        submissionStatus = 'Flagged';
+      }
+
+      // Check daily submission count (only if not already flagged)
+      if (!isSuspicious && internalUserId) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const { count } = await supabase
+          .from('submission_reviews')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', internalUserId)
+          .gte('submitted_at', today.toISOString())
+          .lt('submitted_at', tomorrow.toISOString());
+
+        if (count && count >= MAX_DAILY_SUBMISSIONS) {
+          isSuspicious = true;
+          fraudReason = 'High Frequency';
+          submissionStatus = 'Flagged';
+        }
+      }
+
+      // ------------------------------------------------------------------
+      // SENSOR MISMATCH CHECK
+      // Compare user reported weight with machine sensor delta
+      // ------------------------------------------------------------------
+      if (!isSuspicious && machineState) {
+        // Get current bin weight from machine state (the sensor reading before this submission)
+        const currentSensorWeight = Number(machineState.current_bag_weight || 0);
+        
+        if (currentSensorWeight > 0 && weight > 0) {
+          // Calculate the difference percentage
+          // Sensor delta = weight submitted (current sensor reading should be less after submission)
+          // But we have the BEFORE value, so compare user weight to what machine recorded
+          const difference = Math.abs(weight - currentSensorWeight);
+          const percentDifference = (difference / Math.max(weight, currentSensorWeight)) * 100;
+          
+          if (percentDifference > 10) {
+            isSuspicious = true;
+            fraudReason = 'Sensor Mismatch';
+            submissionStatus = 'Flagged';
+            
+            console.log(`⚠️ Sensor Mismatch detected: User=${weight}kg, Sensor=${currentSensorWeight}kg, Diff=${percentDifference.toFixed(1)}%`);
+            
+            // Alert Super Admin
+            await alertSuperAdmin({
+              type: 'SENSOR_MISMATCH',
+              deviceNo: deviceNo,
+              userPhone: userPhone,
+              userWeight: weight,
+              sensorWeight: currentSensorWeight,
+              differencePercent: percentDifference,
+              submittedAt: new Date().toISOString()
+            });
+          }
+        }
+      }
+
+      // If flagged, no points for user
+      const finalPoints = submissionStatus === 'Flagged' ? 0 : machinePoints;
+
+      // ------------------------------------------------------------------
+      // 4. VELOCITY FRAUD CHECK (High Frequency in last 5 mins)
+      // ------------------------------------------------------------------
+      if (internalUserId) {
+        const velocityResult = await detectVelocityFraud(internalUserId);
+        
+        if (!velocityResult.allowed) {
+          // Update the record as velocity fraud
+          await supabase
+            .from('submission_reviews')
+            .upsert([
+              {
+                vendor_record_id: String(putId),
+                user_id: internalUserId,
+                phone: userPhone,
+                merchant_id: merchantId, 
+                device_no: deviceNo,
+                waste_type: detectedType,
+                api_weight: weight,
+                confirmed_weight: 0, 
+                calculated_value: 0,
+                rate_per_kg: appliedRate,
+                machine_given_points: 0,
+                photo_url: imgUrl,
+                status: 'Flagged',
+                is_suspicious: true,
+                fraud_reason: velocityResult.fraudType || 'Velocity Fraud',
+                source: 'WEBHOOK',
+                submitted_at: new Date().toISOString(),
+                bin_weight_snapshot: Number(primaryItem.positionWeight || data.positionWeight || 0)
+              }
+            ], { onConflict: 'vendor_record_id' });
+
+          return res.status(403).json({ 
+            msg: "Submission received and pending verification",
+            flagged: true,
+            reason: velocityResult.fraudType
+          });
+        }
+      }
+
+      // ------------------------------------------------------------------
+      // 5. SAVE RECORD
       // ------------------------------------------------------------------
       const { error: saveError } = await supabase
         .from('submission_reviews')
@@ -185,11 +304,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             waste_type: detectedType,
             api_weight: weight,
             confirmed_weight: 0, 
-            calculated_value: calculatedMoney, 
+            calculated_value: submissionStatus === 'Flagged' ? 0 : calculatedMoney, 
             rate_per_kg: appliedRate,
-            machine_given_points: machinePoints,
+            machine_given_points: finalPoints,
             photo_url: imgUrl,
-            status: 'PENDING', // FORCE PENDING so you can click "Approve" and generate money
+            status: submissionStatus,
+            is_suspicious: isSuspicious,
+            fraud_reason: fraudReason,
             source: 'WEBHOOK',
             submitted_at: new Date().toISOString(),
             bin_weight_snapshot: Number(primaryItem.positionWeight || data.positionWeight || 0)
@@ -197,6 +318,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ], { onConflict: 'vendor_record_id' });
 
       if (saveError) console.error("❌ Save Error:", saveError.message);
+
+      // Return appropriate message based on fraud status
+      if (submissionStatus === 'Flagged') {
+        return res.status(200).json({ 
+          msg: "Submission received and pending verification",
+          flagged: true,
+          reason: fraudReason
+        });
+      }
     }
 
     return res.status(200).json({ msg: "Success" });
@@ -217,4 +347,40 @@ async function logCleaning(deviceNo: string, type: string, weight: number, url: 
         device_no: deviceNo, waste_type: type, bag_weight_collected: weight,
         cleaned_at: new Date().toISOString(), photo_url: url, status: 'PENDING' 
     }]);
+}
+
+interface AlertData {
+    type: string;
+    deviceNo: string;
+    userPhone: string;
+    userWeight: number;
+    sensorWeight: number;
+    differencePercent: number;
+    submittedAt: string;
+}
+
+async function alertSuperAdmin(alertData: AlertData) {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL!;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Find Super Admin email(s)
+    const { data: superAdmins } = await supabase
+        .from('app_admins')
+        .select('email')
+        .eq('role', 'SUPER_ADMIN');
+
+    if (superAdmins && superAdmins.length > 0) {
+        // Insert notification for each Super Admin
+        const notifications = superAdmins.map(admin => ({
+            user_email: admin.email,
+            title: '⚠️ Sensor Mismatch Detected',
+            message: `Machine ${alertData.deviceNo}: User reported ${alertData.userWeight}kg but sensor shows ${alertData.sensorWeight}kg (${alertData.differencePercent.toFixed(1)}% difference). User: ${alertData.userPhone}`,
+            type: 'ALERT',
+            reference_id: null,
+            reference_type: 'SENSOR_MISMATCH'
+        }));
+
+        await supabase.from('notifications').insert(notifications);
+    }
 }

@@ -45,6 +45,21 @@ export function useCleaningRecords() {
             
             if (error) throw error;
             records.value = data as CleaningRecord[];
+
+            // Demo fallback
+            if (records.value.length === 0) {
+                console.log('[CleaningRecords] No real data, using demo values');
+                records.value = Array.from({ length: 10 }, (_, i) => ({
+                    id: `demo-clean-${i}`,
+                    device_no: `DEV-${String.fromCharCode(65 + (i % 4))}`,
+                    cleaner_name: ['John D.', 'Mike S.', 'Sarah K.', 'Tom W.'][i % 4],
+                    waste_type: ['PET', 'Aluminum', 'Paper', 'UCO'][i % 4],
+                    bag_weight_collected: Math.floor(Math.random() * 30) + 5,
+                    status: ['PENDING', 'VERIFIED', 'REJECTED'][i % 3] as any,
+                    cleaned_at: new Date(Date.now() - Math.random() * 14 * 24 * 60 * 60 * 1000).toISOString(),
+                    created_at: new Date(Date.now() - Math.random() * 14 * 24 * 60 * 60 * 1000).toISOString()
+                })) as CleaningRecord[];
+            }
         } catch (err) {
             console.error("Error fetching logs:", err);
         } finally {

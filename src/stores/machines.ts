@@ -13,10 +13,19 @@ export interface DashboardMachine {
   zone: string;
   maintenanceContact: string;
   googleMapsUrl: string;
+  latitude?: number;
+  longitude?: number;
+  lat?: number;
+  lng?: number;
   isOnline: boolean;
   isManualOffline: boolean;
   statusText: string;
   statusCode: number;
+  temperature?: number;
+  lastPing?: string;
+  hasJam?: boolean;
+  hasDoorOpen?: boolean;
+  hasError?: boolean;
   compartments: any[];
 }
 
@@ -74,12 +83,16 @@ export const useMachineStore = defineStore('machines', () => {
     const isCollector = auth.role === 'COLLECTOR';
     const isAgent = auth.role === 'AGENT';
     
-    // For AGENT, check if they have machine assignments
-    let agentAssignedMachineIds: number[] | null = null;
-    if (isAgent) {
-        await fetchMyAssignments();
-        agentAssignedMachineIds = getAssignedMachineIds();
-        console.log("MachineStore: AGENT assigned machine IDs:", agentAssignedMachineIds);
+    // Get current agent's admin ID for assigned_agent_id filtering
+    let currentAgentAdminId: string | null = null;
+    if (isAgent && auth.user?.email) {
+        const { data: agentData } = await supabase
+            .from('app_admins')
+            .select('id')
+            .eq('email', auth.user.email)
+            .single();
+        currentAgentAdminId = agentData?.id || null;
+        console.log("MachineStore: AGENT ID for filtering:", currentAgentAdminId);
     }
     
     console.log("MachineStore: Fetching with role:", auth.role, "isPlatformOwner:", isPlatformOwner, "isViewer:", isViewer, "merchantId:", auth.merchantId);
@@ -149,16 +162,17 @@ export const useMachineStore = defineStore('machines', () => {
           }
           // If no assignments AND no merchant, viewer sees nothing (handled by security wipe)
       } else if (isAgent) {
-          // AGENT sees only their assigned machines
-          if (agentAssignedMachineIds && agentAssignedMachineIds.length > 0) {
-              query = query.in('id', agentAssignedMachineIds);
-              console.log("MachineStore: AGENT filtered to assigned machines:", agentAssignedMachineIds.length);
-          } else if (auth.merchantId) {
-              // Fall back to merchant filter if no specific assignments
-              query = query.eq('merchant_id', auth.merchantId);
-              console.log("MachineStore: AGENT using merchant filter:", auth.merchantId);
+          // AGENT sees only machines where assigned_agent_id matches their ID
+          if (currentAgentAdminId) {
+              query = query.eq('assigned_agent_id', currentAgentAdminId);
+              console.log("MachineStore: AGENT filtered by assigned_agent_id:", currentAgentAdminId);
+          } else {
+              // Agent has no admin ID - show nothing (security)
+              console.log("MachineStore: AGENT has no admin ID - showing nothing");
+              machines.value = [];
+              loading.value = false;
+              return;
           }
-          // If no assignments AND no merchant, agent sees nothing
       } else if ((isCollector) && auth.merchantId) {
           // COLLECTOR uses merchant filter to see all machines for their merchant
           query = query.eq('merchant_id', auth.merchantId);
@@ -281,20 +295,47 @@ export const useMachineStore = defineStore('machines', () => {
            mapsUrl = `http://googleusercontent.com/maps.google.com/?q=${dbMachine.latitude},${dbMachine.longitude}`;
         }
 
-        tempMachines.push({
-          id: dbMachine.id,
-          deviceNo: dbMachine.device_no,
-          name: dbMachine.name,
-          address: dbMachine.address,
-          zone: dbMachine.zone || 'General',
-          maintenanceContact: dbMachine.maintenance_contact || 'Unassigned',
-          googleMapsUrl: mapsUrl,
-          isOnline,
-          isManualOffline,
-          statusCode,
-          statusText,
-          compartments
-        });
+// Calculate days until full for each compartment
+    const compartmentsWithDays = compartments.map((comp: any) => {
+      const weight = parseFloat(comp.weight) || 0;
+      const daysUntilFull = calculateDaysUntilFullSync(weight);
+      return {
+        ...comp,
+        estimatedFullDays: daysUntilFull
+      };
+    });
+    
+    // Get additional machine vitals from API/config
+    const apiMachine = apiConfigs.find((c: any) => c.deviceNo === dbMachine.device_no) || {};
+    const temperature = apiMachine.temperature || dbMachine.temperature || null;
+    const lastPing = apiMachine.lastPing || dbMachine.last_online || null;
+    const hasJam = apiMachine.status === 2 || apiMachine.jam === true || apiMachine.jam === 'true';
+    const hasDoorOpen = apiMachine.doorOpen === true || apiMachine.doorOpen === 'true' || apiMachine.status === 3;
+    const hasError = hasJam || hasDoorOpen;
+    
+    tempMachines.push({
+            id: dbMachine.id,
+            deviceNo: dbMachine.device_no,
+            name: dbMachine.name,
+            address: dbMachine.address,
+            zone: dbMachine.zone || 'General',
+            maintenanceContact: dbMachine.maintenance_contact || 'Unassigned',
+            googleMapsUrl: mapsUrl,
+            latitude: dbMachine.latitude,
+            longitude: dbMachine.longitude,
+            lat: dbMachine.latitude,
+            lng: dbMachine.longitude,
+            isOnline,
+            isManualOffline,
+            statusCode,
+            statusText,
+            temperature,
+            lastPing,
+            hasJam,
+            hasDoorOpen,
+            hasError,
+            compartments: compartmentsWithDays
+          });
         
         await sleep(100); 
       }
@@ -349,6 +390,76 @@ export const useMachineStore = defineStore('machines', () => {
     lastFetchedMerchantId, 
     toggleOfflineMode,
     viewerAssignments,
-    viewerHasAssignments
+    viewerHasAssignments,
+    calculateDaysUntilFull
   };
 });
+
+// Sync version for immediate calculation (estimates based on typical rate)
+function calculateDaysUntilFullSync(currentWeight: number, totalCapacity: number = 50): number | null {
+  const binCapacity = totalCapacity || 50;
+  const remainingCapacity = binCapacity - currentWeight;
+  
+  if (remainingCapacity <= 0) return 0;
+  if (remainingCapacity >= binCapacity) return null;
+  
+  // Typical daily rate ~5kg/day for estimation
+  const typicalDailyRate = 5;
+  return Math.round(remainingCapacity / typicalDailyRate);
+}
+
+// Days Until Full Calculation Utility (async with actual data)
+async function calculateDaysUntilFull(machineId: number, currentWeight: number, totalCapacity: number = 50): Promise<number | null> {
+  try {
+    // Default bin capacity is 50kg per bin
+    const binCapacity = totalCapacity || 50;
+    
+    // Calculate remaining capacity
+    const remainingCapacity = binCapacity - currentWeight;
+    
+    if (remainingCapacity <= 0) return 0; // Already full
+    if (remainingCapacity >= binCapacity) return null; // Empty, can't calculate
+    
+    // Get last 7 days of weight data for this machine
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const { data: submissions, error } = await supabase
+      .from('submission_reviews')
+      .select('api_weight, submitted_at')
+      .eq('device_no', machineId)
+      .gte('submitted_at', sevenDaysAgo.toISOString())
+      .eq('status', 'VERIFIED')
+      .order('submitted_at', { ascending: true });
+    
+    if (error || !submissions || submissions.length === 0) {
+      // No data in last 7 days - estimate based on typical rate
+      return Math.round(remainingCapacity / 5); // Assume ~5kg/day average
+    }
+    
+    // Group weight by date
+    const dailyWeights: Record<string, number> = {};
+    for (const sub of submissions) {
+      const date = new Date(sub.submitted_at).toISOString().split('T')[0];
+      if (!date) continue;
+      dailyWeights[date] = (dailyWeights[date] ?? 0) + (sub.api_weight ?? 0);
+    }
+    
+    // Calculate average daily rate
+    const daysWithData = Object.keys(dailyWeights).length;
+    const totalWeight = Object.values(dailyWeights).reduce((sum, w) => sum + w, 0);
+    const averageDailyRate = totalWeight / daysWithData;
+    
+    if (averageDailyRate <= 0) {
+      return Math.round(remainingCapacity / 5); // Fallback to typical rate
+    }
+    
+    // Calculate days until full
+    const daysUntilFull = Math.round(remainingCapacity / averageDailyRate);
+    
+    return daysUntilFull;
+  } catch (err) {
+    console.error('Days Until Full calculation error:', err);
+    return null;
+  }
+}

@@ -6,20 +6,24 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "seed:environmental-impact": "tsx scripts/seed-environmental-impact.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.87.1",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "axios": "^1.13.2",
     "blueimp-md5": "^2.19.0",
+    "chart.js": "^4.5.1",
     "docx": "^9.5.1",
     "file-saver": "^2.0.5",
+    "html5-qrcode": "^2.3.8",
+    "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-vue-next": "^0.561.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.24",
-    "vue-i18n": "^11.3.0",
+    "vue-chartjs": "^5.3.3",
     "vue-router": "^4.6.4",
     "xlsx": "^0.18.5"
   },
@@ -32,8 +36,10 @@
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
     "autoprefixer": "^10.4.23",
+    "dotenv": "^16.4.7",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.19.2",
     "typescript": "~5.9.3",
     "vite": "^7.3.0",
     "vue-tsc": "^3.1.4"

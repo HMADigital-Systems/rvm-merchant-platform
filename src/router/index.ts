@@ -15,6 +15,8 @@ import AdminManager from '../views/AdminManager.vue';
 import IssueReports from '../views/IssueReports.vue';
 import MerchantSettings from '../views/MerchantSettings.vue';
 import BigDataPlatform from '../views/BigDataPlatform.vue';
+import Reports from '../views/Reports.vue';
+import CommandCenter from '../views/CommandCenter.vue';
 
 const MerchantsManager = () => import('../views/SuperAdmin/Merchants.vue');
 const ManageClientSettings = () => import('../views/SuperAdmin/ManageClientSettings.vue');
@@ -31,18 +33,25 @@ const router = createRouter({
       component: Login,
       meta: { hideSidebar: true, requiresAuth: false, title: 'Login' } 
     },
-    {
-      path: '/big-data',
-      name: 'BigDataPlatform',
-      component: BigDataPlatform,
-      meta: { requiresAuth: true, title: 'Big Data Platform' }
-    },
-    {
-      path: '/admin/docs',
-      name: 'AdminDocs',
-      component: () => import('../views/AdminDocs.vue'),
-      meta: { requiresAuth: true, title: 'Operations Manual' }
-    },
+{
+       path: '/big-data',
+       name: 'BigDataPlatform',
+       component: BigDataPlatform,
+       meta: { requiresAuth: true, title: 'Big Data Platform' }
+     },
+     {
+       path: '/command-center',
+       name: 'CommandCenter',
+       component: () => import('../views/CommandCenter.vue'),
+       meta: { requiresAuth: true, title: 'Command Center' }
+     },
+      
+      {
+       path: '/admin/docs',
+       name: 'AdminDocs',
+       component: () => import('../views/AdminDocs.vue'),
+       meta: { requiresAuth: true, title: 'Operations Manual' }
+     },
 
     // --------------------------------------------------------
     // 2. PROTECTED ROUTES (Wrapped in Layout)
@@ -101,6 +110,12 @@ const router = createRouter({
           component: MachineStatus,
           meta: { title: 'Machine Status' } 
         },
+        {
+          path: 'reports',
+          name: 'Reports',
+          component: () => import('../views/Reports.vue'),
+          meta: { title: 'Reports' } 
+        },
         { 
           path: 'admins', 
           name: 'admins',
@@ -119,6 +134,18 @@ const router = createRouter({
           component: MerchantSettings,
           meta: { title: 'Settings' } 
         },
+        {
+          path: 'admin/leaderboard',
+          name: 'AdminLeaderboard',
+          component: () => import('../views/AdminLeaderboard.vue'),
+          meta: { requiresSuperAdmin: true, title: 'Leaderboard & Audit' }
+        },
+        {
+          path: 'live-recycler-monitor',
+          name: 'LiveRecyclerMonitor',
+          component: () => import('../views/LiveRecyclerMonitor.vue'),
+          meta: { requiresSuperAdmin: true, title: 'Live Recycler Monitor' }
+        },
         // Super Admin Routes
         {
           path: 'super-admin/merchants',
@@ -127,10 +154,22 @@ const router = createRouter({
           meta: { requiresSuperAdmin: true, title: 'Manage Clients' } 
         },
         {
+          path: 'super-admin/investors',
+          name: 'InvestorManagement',
+          component: () => import('../views/SuperAdmin/InvestorManagement.vue'),
+          meta: { requiresSuperAdmin: true, title: 'Investor Management' } 
+        },
+        {
           path: 'super-admin/config',
           name: 'SuperAdminConfig',
           component: ManageClientSettings,
           meta: { requiresSuperAdmin: true, title: 'Platform Config' } 
+        },
+        {
+          path: 'platform/advertising',
+          name: 'DigitalAdvertising',
+          component: () => import('../views/DigitalAdvertising.vue'),
+          meta: { requiresSuperAdmin: true, title: 'Digital Advertising' } 
         },
         {
           path: 'super-admin/issues',
