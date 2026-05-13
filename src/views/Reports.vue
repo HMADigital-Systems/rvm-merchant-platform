@@ -7,7 +7,8 @@ import jsPDF from 'jspdf';
 import { 
   FileText, Download, BarChart3, Settings, ClipboardList, 
   TrendingUp, AlertTriangle, Recycle, DollarSign, Calendar,
-  Package, User, Activity, CheckCircle, XCircle, Truck, Scale
+  Package, User, Activity, CheckCircle, XCircle, Truck, Scale,
+  Trash2
 } from 'lucide-vue-next';
 
 const auth = useAuthStore();
@@ -98,6 +99,74 @@ const financialReport = ref<FinancialReport>({
   totalRewardClaims: 0,
   estimatedRMValue: 0
 });
+
+// Waste Disposal Logs (Live data)
+const wasteDisposalLogs = ref<any[]>([]);
+
+const fetchWasteDisposalLogs = async () => {
+  loading.value = true;
+  try {
+    const { start, end } = dateRange.value;
+    const endDate = end + ' 23:59:59';
+
+    // 1. Fetch cleaning records (maintenance events)
+    const { data: cleaningData } = await supabase
+      .from('cleaning_records')
+      .select('id, device_no, waste_type, bag_weight_collected, cleaned_at, cleaner_name, status, photo_url')
+      .gte('cleaned_at', start)
+      .lte('cleaned_at', endDate)
+      .order('cleaned_at', { ascending: false })
+      .limit(100);
+
+    // 2. Fetch live submission reviews (user recycling submissions)
+    const { data: submissions } = await supabase
+      .from('submission_reviews')
+      .select('id, device_no, waste_type, api_weight, calculated_value, submitted_at, phone, photo_url, status, source')
+      .gte('submitted_at', start)
+      .lte('submitted_at', endDate)
+      .order('submitted_at', { ascending: false })
+      .limit(200);
+
+    // Map cleaning records
+    const cleaningLogs = (cleaningData || []).map((r: any) => ({
+      id: r.id,
+      date: r.cleaned_at || '',
+      machine: r.device_no || '-',
+      wasteType: r.waste_type || 'Mixed',
+      weight: Number(r.bag_weight_collected || 0),
+      operator: r.cleaner_name || 'System',
+      status: r.status || 'VERIFIED',
+      type: 'Cleaning',
+      source: 'cleaning',
+      photoUrl: r.photo_url || ''
+    }));
+
+    // Map submission reviews
+    const submissionLogs = (submissions || []).map((s: any) => ({
+      id: `sub-${s.id}`,
+      date: s.submitted_at || '',
+      machine: s.device_no || '-',
+      wasteType: s.waste_type || 'Recyclable',
+      weight: Number(s.api_weight || 0),
+      operator: s.phone || 'Unknown',
+      status: s.status === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+      type: 'Submission',
+      source: s.source === 'MIGRATION' ? 'Migration' : 'Live',
+      photoUrl: s.photo_url || ''
+    }));
+
+    // Merge and sort by date (newest first)
+    const merged = [...cleaningLogs, ...submissionLogs].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    wasteDisposalLogs.value = merged;
+  } catch (err) {
+    console.error('Waste disposal fetch error:', err);
+  } finally {
+    loading.value = false;
+  }
+};
 
 const fetchCollectionReport = async () => {
   loading.value = true;
@@ -388,6 +457,9 @@ const loadReport = () => {
     case 'financial':
       fetchFinancialReport();
       break;
+    case 'disposal':
+      fetchWasteDisposalLogs();
+      break;
   }
 };
 
@@ -462,6 +534,19 @@ const exportToExcel = () => {
         { Metric: 'Estimated RM Value', Value: `RM ${financialReport.value.estimatedRMValue.toFixed(2)}` }
       ];
       filename = 'financial_report';
+      break;
+    case 'disposal':
+      data = wasteDisposalLogs.map(l => ({
+        'Date': formatDate(l.date),
+        'Machine': l.machine,
+        'Type': l.type,
+        'Waste': l.wasteType,
+        'Weight (kg)': l.weight,
+        'Operator': l.operator,
+        'Source': l.source,
+        'Status': l.status
+      }));
+      filename = 'waste_disposal_logs';
       break;
   }
 
@@ -669,6 +754,7 @@ watch(dateRange, () => {
             { id: 'collector-collections', label: 'Collector Collections', icon: Truck },
             { id: 'maintenance', label: 'Maintenance', icon: Settings },
             { id: 'collector', label: 'Collector Logs', icon: ClipboardList },
+            { id: 'disposal', label: 'Waste Disposal', icon: Trash2 },
             { id: 'financial', label: 'Financial', icon: DollarSign }
           ]" 
           :key="tab.id"
@@ -1010,6 +1096,80 @@ watch(dateRange, () => {
                 </div>
                 <p v-if="collectorCollectionReport.byMachine.length === 0" class="text-gray-500 text-center py-4">No data</p>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Waste Disposal Logs Tab -->
+        <div v-else-if="activeTab === 'disposal'" class="space-y-6">
+          <!-- Stats Cards -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <p class="text-xs text-gray-500 uppercase font-semibold">Total Records</p>
+              <p class="text-2xl font-bold text-gray-900 mt-1">{{ wasteDisposalLogs.length }}</p>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <p class="text-xs text-gray-500 uppercase font-semibold">From Submissions</p>
+              <p class="text-2xl font-bold text-green-600 mt-1">{{ wasteDisposalLogs.filter(r => r.source === 'Live' || r.source === 'Migration').length }}</p>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <p class="text-xs text-gray-500 uppercase font-semibold">From Cleaning</p>
+              <p class="text-2xl font-bold text-blue-600 mt-1">{{ wasteDisposalLogs.filter(r => r.type === 'Cleaning').length }}</p>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <p class="text-xs text-gray-500 uppercase font-semibold">Total Weight</p>
+              <p class="text-2xl font-bold text-amber-600 mt-1">{{ wasteDisposalLogs.reduce((s, r) => s + r.weight, 0).toFixed(1) }} <span class="text-sm font-normal text-gray-500">kg</span></p>
+            </div>
+          </div>
+
+          <!-- Table -->
+          <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left">
+                <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
+                  <tr>
+                    <th class="px-4 py-3">Date/Time</th>
+                    <th class="px-4 py-3">Machine</th>
+                    <th class="px-4 py-3">Type</th>
+                    <th class="px-4 py-3">Waste</th>
+                    <th class="px-4 py-3 text-right">Weight</th>
+                    <th class="px-4 py-3">Operator</th>
+                    <th class="px-4 py-3 text-center">Source</th>
+                    <th class="px-4 py-3 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  <tr v-if="wasteDisposalLogs.length === 0">
+                    <td colspan="8" class="p-8 text-center text-gray-400">No disposal records found for this date range.</td>
+                  </tr>
+                  <tr v-for="item in wasteDisposalLogs" :key="item.id" class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{ formatDate(item.date) }}</td>
+                    <td class="px-4 py-3">
+                      <span class="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">{{ item.machine }}</span>
+                    </td>
+                    <td class="px-4 py-3">
+                      <span :class="item.type === 'Cleaning' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-green-100 text-green-700 border-green-200'"
+                            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border">
+                        {{ item.type }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ item.wasteType }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-semibold text-gray-900">{{ item.weight.toFixed(2) }} kg</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ item.operator }}</td>
+                    <td class="px-4 py-3 text-center">
+                      <span :class="item.source === 'Live' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'"
+                            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium">
+                        {{ item.source }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                      <span v-if="item.status === 'VERIFIED'" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Verified</span>
+                      <span v-else-if="item.status === 'REJECTED'" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Rejected</span>
+                      <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Pending</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
