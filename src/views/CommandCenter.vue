@@ -193,6 +193,34 @@ const formattedDate = computed(() => {
 });
 
 // Stats computed
+// Top recyclers ranking (same as Users page Top Recyclers)
+const topRecyclers = ref<any[]>([]);
+
+const fetchTopRecyclers = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('nickname, user_id, phone, total_weight, total_points, avatar_url')
+      .not('total_weight', 'is', null)
+      .gt('total_weight', 0)
+      .order('total_weight', { ascending: false })
+      .limit(10);
+    
+    if (error) throw error;
+    
+    topRecyclers.value = (data || []).map((u: any) => ({
+      id: u.user_id || u.id,
+      name: u.nickname || u.phone || 'Anonymous',
+      weight: Number(u.total_weight || 0).toFixed(2),
+      points: Number(u.total_points || 0).toFixed(2),
+      avatar: u.avatar_url || ''
+    }));
+  } catch (e) {
+    console.log('Failed to fetch top recyclers:', e);
+    topRecyclers.value = [];
+  }
+};
+
 const todayStats = computed(() => {
   const online = mapMachines.value.filter(m => m.isOnline).length;
   const offline = mapMachines.value.length - online;
@@ -369,6 +397,7 @@ onMounted(async () => {
   await fetchMachines();
   await fetchSubmissions();
   await fetchCollectionsData();
+  await fetchTopRecyclers();
   startPolling();
   
   timeInterval = setInterval(() => {
@@ -440,6 +469,33 @@ onUnmounted(() => {
             <div class="stat-row">
               <span class="label">Points Paid</span>
               <span class="value amber">{{ formatCurrency(displayExpenses) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Middle: Top Recyclers Ranking -->
+        <div class="cyber-card">
+          <div class="section-title">
+            <Users :size="16" />
+            <span>TOP RECYCLERS</span>
+          </div>
+          <div class="rank-list">
+            <div v-if="topRecyclers.length === 0" class="empty-rank">No recyclers found</div>
+            <div 
+              v-for="(recycler, idx) in topRecyclers" 
+              :key="recycler.id"
+              class="rank-item"
+            >
+              <div class="rank-badge" :class="'rank-' + (idx + 1)">{{ idx + 1 }}</div>
+              <div class="rank-avatar">
+                <img v-if="recycler.avatar" :src="recycler.avatar" class="rank-img" />
+                <div v-else class="rank-img-default">{{ recycler.name.charAt(0).toUpperCase() }}</div>
+              </div>
+              <div class="rank-info">
+                <div class="rank-name">{{ recycler.name }}</div>
+                <div class="rank-meta">{{ recycler.weight }} kg · {{ recycler.points }} pts</div>
+              </div>
+              <div class="rank-weight">{{ recycler.weight }}<span class="rank-unit">kg</span></div>
             </div>
           </div>
         </div>
