@@ -25,7 +25,7 @@ export function useUserProfile(userId: string) {
     loading.value = true;
     try {
       // A. Get User
-      const { data: userData } = await supabase.from('users').select('*').eq('id', userId).single();
+      const { data: userData } = await supabase.from('users').select('*').eq('user_id', userId).single();
       user.value = userData as User;
 
       // B. Get Withdrawals
