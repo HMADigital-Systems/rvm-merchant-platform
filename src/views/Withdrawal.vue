@@ -66,8 +66,8 @@ const filteredList = computed(() => {
     const q = searchFilters.value.search.toLowerCase();
     if (q) {
       const match = 
-        (w.users?.phone || '').toLowerCase().includes(q) ||
-        (w.users?.nickname || '').toLowerCase().includes(q) ||
+        (w.user_phone || '').toLowerCase().includes(q) ||
+        (w.user_nickname || '').toLowerCase().includes(q) ||
         (w.bank_name || '').toLowerCase().includes(q) ||
         (w.account_number || '').toLowerCase().includes(q);
       
@@ -288,15 +288,15 @@ watch(() => auth.role, (newRole) => {
               <td class="px-6 py-4 whitespace-nowrap">
                 <div class="flex items-center">
                   <div class="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center mr-2 overflow-hidden shrink-0">
-                    <img v-if="w.users?.avatar_url" :src="w.users.avatar_url" class="h-full w-full object-cover" />
+                    <img v-if="w.user_avatar" :src="w.user_avatar" class="h-full w-full object-cover" />
                     <span v-else class="text-xs">👤</span>
                   </div>
-                  <span class="font-medium text-gray-900">{{ w.users?.nickname || 'Guest' }}</span>
+                  <span class="font-medium text-gray-900">{{ w.user_nickname || 'Guest' }}</span>
                 </div>
               </td>
 
               <td class="px-6 py-4 whitespace-nowrap font-mono text-xs text-gray-600">
-                {{ w.users?.phone || '-' }}
+                {{ w.user_phone || '-' }}
               </td>
 
               <td class="px-6 py-4 whitespace-nowrap text-right font-bold text-gray-900">

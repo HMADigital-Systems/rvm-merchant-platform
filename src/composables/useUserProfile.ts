@@ -24,23 +24,26 @@ export function useUserProfile(userId: string) {
   const fetchProfile = async () => {
     loading.value = true;
     try {
-      // A. Get User
-      const { data: userData } = await supabase.from('users').select('*').eq('user_id', userId).single();
+      // A. Get User by UUID (users.id = route param)
+      const { data: userData } = await supabase.from('users').select('*').eq('id', userId).single();
       user.value = userData as User;
+      
+      // Get the string user_id for related tables
+      const uid = user.value?.user_id || '';
 
-      // B. Get Withdrawals
+      // B. Get Withdrawals (by user_id string)
       const { data: withdrawals } = await supabase
         .from('withdrawals')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', uid)
         .order('created_at', { ascending: false });
       withdrawalHistory.value = (withdrawals as Withdrawal[]) || [];
 
-      // C. Get Recycling History (LOCAL LEDGER)
+      // C. Get Recycling History (by user_id string)
       const { data: reviews } = await supabase
         .from('submission_reviews')
         .select(`*, merchants(currency_symbol)`)
-        .eq('user_id', userId)
+        .eq('user_id', uid)
         .order('submitted_at', { ascending: false });
         
       recyclingHistory.value = (reviews as SubmissionReview[]) || [];

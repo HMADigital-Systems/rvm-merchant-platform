@@ -12,6 +12,7 @@ export const useAuthStore = defineStore('auth', () => {
   // SaaS Context
   const role = ref<string | null>(null);
   const merchantId = ref<string | null>(null);
+  const pagePermissions = ref<string[]>([]);
 
   // 1. Initialize: Check session & Load Profile
   async function initializeAuth() {
@@ -68,7 +69,7 @@ export const useAuthStore = defineStore('auth', () => {
     console.log("🔍 fetchAdminProfile: Looking up profile for email:", email);
     const { data, error } = await supabase
       .from('app_admins')
-      .select('role, merchant_id')
+      .select('role, merchant_id, page_permissions')
       .eq('email', email)
       .single();
     
@@ -80,6 +81,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (data) {
         role.value = data.role;
         merchantId.value = data.merchant_id;
+        pagePermissions.value = data.page_permissions || [];
         console.log(`👤 Login Profile: ${data.role} | Merchant: ${data.merchant_id || 'Global'}`);
         console.log("Auth Store: Role is now set to:", role.value);
         return true;
@@ -169,5 +171,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, session, role, merchantId, loading, initializeAuth, login, register, logout };
+  return { user, session, role, merchantId, pagePermissions, loading, initializeAuth, login, register, logout };
 });

@@ -55,12 +55,8 @@ export function useWithdrawals() {
     console.log("Withdrawals: Fetching with role:", auth.role);
     try {
       let query = supabase
-        .from('withdrawals')
-        .select(`
-            *,
-            users ( nickname, phone, avatar_url ),
-            merchants!merchant_id ( name ) 
-        `)
+        .from('withdrawal_details')
+        .select(`*`)
         .order('created_at', { ascending: false });
 
       // 🔥 SaaS Filter - VIEWER role can see ALL data
@@ -118,9 +114,9 @@ export function useWithdrawals() {
       if (withdrawals.value.length === 0) {
         console.log('[Withdrawals] No real data, using demo values');
         withdrawals.value = [
-          { id: 'demo-w1', user_id: 'user-1', amount: 50, status: 'PENDING', created_at: new Date().toISOString(), users: { nickname: 'John D.', phone: '1234567890' }, merchants: { name: 'Demo Merchant' } },
-          { id: 'demo-w2', user_id: 'user-2', amount: 75, status: 'PENDING', created_at: new Date().toISOString(), users: { nickname: 'Sarah K.', phone: '9876543210' }, merchants: { name: 'Demo Merchant' } },
-          { id: 'demo-w3', user_id: 'user-3', amount: 100, status: 'APPROVED', created_at: new Date().toISOString(), users: { nickname: 'Mike T.', phone: '5551234567' }, merchants: { name: 'Demo Merchant' } }
+          { id: 'demo-w1', user_id: 'user-1', amount: 50, status: 'PENDING', created_at: new Date().toISOString(), user_nickname: 'John D.', user_phone: '1234567890', merchant_name: 'Demo Merchant' },
+          { id: 'demo-w2', user_id: 'user-2', amount: 75, status: 'PENDING', created_at: new Date().toISOString(), user_nickname: 'Sarah K.', user_phone: '9876543210', merchant_name: 'Demo Merchant' },
+          { id: 'demo-w3', user_id: 'user-3', amount: 100, status: 'APPROVED', created_at: new Date().toISOString(), user_nickname: 'Mike T.', user_phone: '5551234567', merchant_name: 'Demo Merchant' }
         ] as any;
       }
     } catch (error) {

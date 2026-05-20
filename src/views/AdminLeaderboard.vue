@@ -1,359 +1,359 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useAdminLeaderboard } from '../composables/useAdminLeaderboard';
-import { useAuthStore } from '../stores/auth';
-import { 
-  Trophy, Users, Scale, Coins, Calendar,
-  RefreshCw, Download, Eye, History,
-  AlertTriangle, CheckCircle, ChevronRight
-} from 'lucide-vue-next';
+import { ref } from 'vue';
+import { Trophy, RefreshCw, TrendingUp, Crown, Eye, Leaf, Award } from 'lucide-vue-next';
 
-const authStore = useAuthStore();
+// ========================================
+// TAB STATE (reactive id-based)
+// ========================================
+const activeTab = ref('current');
+const tabs = [
+  { id: 'current', label: 'Current Leaderboard', icon: TrendingUp },
+  { id: 'monthly', label: 'Monthly Champions', icon: Crown }
+];
 
-const isSuperAdmin = computed(() => authStore.role === 'SUPER_ADMIN');
+// ========================================
+// LEADERBOARD DATA (hex color tags)
+// ========================================
+const leaderboards = ref<any[]>([]);
+const leaderboardLoading = ref(true);
 
-const {
-  loading,
-  leaderboard,
-  monthlyHistory,
-  fetchLeaderboard,
-  fetchMonthlyHistory,
-  resetLeaderboard,
-  getUserTransactions
-} = useAdminLeaderboard();
+const monthlyLeaderboards = ref<any[]>([]);
 
-const activeTab = ref<'leaderboard' | 'history' | 'audit'>('leaderboard');
-
-const selectedUser = ref<string | null>(null);
-const userTransactions = ref<any[]>([]);
-const showTransactionModal = ref(false);
-const showResetConfirm = ref(false);
-
-const fetchUserTransactions = async (userId: string) => {
-  selectedUser.value = userId;
-  userTransactions.value = await getUserTransactions(userId);
-  showTransactionModal.value = true;
+const fetchLeaderboard = async () => {
+  leaderboardLoading.value = true;
+  try {
+    const { supabase } = await import('../services/supabase');
+    const colors = ['#3b82f6', '#22c55e', '#a855f7', '#f97316', '#ec4899', '#14b8a6', '#eab308', '#6366f1', '#f43f5e', '#0ea5e9'];
+    
+    // 1. All-time leaderboard (from users table)
+    const { data: allTime } = await supabase
+      .from('users')
+      .select('user_id, nickname, total_weight')
+      .not('total_weight', 'is', null)
+      .neq('total_weight', 0)
+      .order('total_weight', { ascending: false })
+      .limit(20);
+    
+    if (allTime) {
+      leaderboards.value = allTime
+        .filter((u: any) => u.nickname)
+        .map((u: any, i: number) => ({
+          rank: i + 1,
+          name: u.nickname,
+          initial: (u.nickname || '?')[0].toUpperCase(),
+          color: colors[i % colors.length],
+          id: u.user_id,
+          totalWeight: Number(u.total_weight || 0),
+          carbonSaved: Number(u.total_weight || 0) * 0.85,
+          submissions: 0
+        }));
+    }
+    
+    // 2. Monthly leaderboard (from submission_reviews this month)
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    
+    const { data: monthlyData } = await supabase
+      .from('submission_reviews')
+      .select('user_id, api_weight')
+      .eq('status', 'VERIFIED')
+      .gte('submitted_at', startOfMonth.toISOString());
+    
+    if (monthlyData && monthlyData.length > 0) {
+      // Aggregate by user_id
+      const userTotals = new Map<string, number>();
+      monthlyData.forEach((r: any) => {
+        const uid = r.user_id;
+        userTotals.set(uid, (userTotals.get(uid) || 0) + Number(r.api_weight || 0));
+      });
+      
+      // Get user profiles for the top monthly users
+      const topUserIds = [...userTotals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([id]) => id);
+      
+      const { data: profiles } = await supabase
+        .from('users')
+        .select('user_id, nickname')
+        .in('user_id', topUserIds);
+      
+      const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
+      
+      monthlyLeaderboards.value = [...userTotals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([userId, weight], i) => {
+          const profile = profileMap.get(userId);
+          return {
+            rank: i + 1,
+            name: profile?.nickname || 'User #' + userId.slice(-4),
+            initial: (profile?.nickname || '?')[0].toUpperCase(),
+            color: colors[i % colors.length],
+            id: userId,
+            totalWeight: weight,
+            carbonSaved: weight * 0.85,
+            submissions: 0
+          };
+        });
+    }
+  } catch (e) {
+    console.error('Failed to fetch leaderboard:', e);
+  } finally {
+    leaderboardLoading.value = false;
+  }
 };
 
-const closeTransactionModal = () => {
-  showTransactionModal.value = false;
-  selectedUser.value = null;
-  userTransactions.value = [];
+// Fetch on mount
+fetchLeaderboard();
+
+// ========================================
+// RANK STYLING
+// ========================================
+const rankBadgeClass = (rank: number) => {
+  if (rank === 1) return 'bg-amber-100 text-amber-700 border-amber-300';
+  if (rank === 2) return 'bg-slate-100 text-slate-600 border-slate-300';
+  if (rank === 3) return 'bg-orange-100 text-orange-700 border-orange-300';
+  return 'bg-gray-100 text-gray-500 border-gray-200';
 };
 
-const handleResetLeaderboard = async () => {
-  await resetLeaderboard();
-  showResetConfirm.value = false;
+const setTab = (tabId: string) => { activeTab.value = tabId; };
+
+const showHistoryModal = ref(false);
+const selectedUser = ref<any>(null);
+const userHistory = ref<any[]>([]);
+const historyLoading = ref(false);
+
+const viewHistory = async (user: any) => {
+  selectedUser.value = user;
+  showHistoryModal.value = true;
+  historyLoading.value = true;
+  userHistory.value = [];
+  
+  try {
+    const { supabase } = await import('../services/supabase');
+    const { data } = await supabase
+      .from('submission_reviews')
+      .select('id, device_no, waste_type, api_weight, calculated_value, status, submitted_at')
+      .eq('user_id', user.user_id)
+      .order('submitted_at', { ascending: false })
+      .limit(20);
+    
+    if (data) userHistory.value = data;
+  } catch (e) {
+    console.error('Failed to fetch history:', e);
+  } finally {
+    historyLoading.value = false;
+  }
 };
 
-const formatDate = (dateStr: string) => {
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
+const resetLeaderboard = () => {
+  console.log('[Leaderboard] Reset triggered');
 };
-
-const formatWeight = (weight: number) => {
-  return weight.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-};
-
-onMounted(() => {
-  fetchLeaderboard();
-  fetchMonthlyHistory();
-});
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 p-6">
-    <!-- Header -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 mb-6">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="flex items-center gap-2 text-sm text-gray-500 mb-2">
-            <span>Dashboard</span>
-            <ChevronRight :size="16" />
-            <span class="text-gray-900">Admin Leaderboard</span>
-          </div>
-          <h1 class="text-2xl font-bold text-gray-900">Leaderboard & Audit</h1>
-          <p class="text-gray-500 mt-1">Monitor top performers and audit transactions</p>
-        </div>
-        
-        <div v-if="isSuperAdmin" class="flex items-center gap-3">
-          <button 
-            @click="showResetConfirm = true"
-            class="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm"
-          >
-            <RefreshCw :size="18" />
-            Reset Leaderboard
-          </button>
-        </div>
-      </div>
-    </div>
+  <div class="space-y-6">
 
-    <!-- Tabs -->
-    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6">
-      <nav class="flex gap-8 px-8 py-2">
-        <button 
-          @click="activeTab = 'leaderboard'"
-          :class="[
-            'py-5 text-sm font-medium border-b-2 transition-colors',
-            activeTab === 'leaderboard' 
-              ? 'border-emerald-600 text-emerald-600' 
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          ]"
+    <!-- ================================ -->
+    <!-- BREADCRUMBS + HEADER             -->
+    <!-- ================================ -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <div class="flex items-center gap-1 text-sm text-gray-400 mb-1">
+          <span>Dashboard</span>
+          <span class="mx-1">&gt;</span>
+          <span class="text-gray-600">Admin Leaderboard</span>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-3">
+          <Trophy class="text-orange-500" :size="28" />
+          Leaderboard & Audit
+        </h1>
+        <p class="text-sm text-gray-500 mt-1">Monitor top performers and audit transactions.</p>
+      </div>
+      <div>
+        <button
+          @click="resetLeaderboard"
+          class="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-xl px-4 py-2 text-sm font-semibold transition shadow-sm"
         >
-          <div class="flex items-center gap-2">
-            <Trophy :size="16" />
-            Current Leaderboard
-          </div>
+          <RefreshCw :size="16" />
+          Reset Leaderboard
         </button>
-        <button 
-          @click="activeTab = 'history'"
-          :class="[
-            'py-5 text-sm font-medium border-b-2 transition-colors',
-            activeTab === 'history' 
-              ? 'border-emerald-600 text-emerald-600' 
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          ]"
-        >
-          <div class="flex items-center gap-2">
-            <History :size="16" />
-            Monthly Champions
-          </div>
-        </button>
-      </nav>
-    </div>
-
-    <!-- Leaderboard Tab -->
-    <div v-if="activeTab === 'leaderboard'" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div v-if="loading" class="p-12 text-center">
-        <RefreshCw class="animate-spin mx-auto text-blue-600" :size="32" />
-        <p class="mt-2 text-gray-500">Loading leaderboard...</p>
-      </div>
-
-      <div v-else-if="leaderboard.length === 0" class="p-12 text-center">
-        <Trophy :size="48" class="mx-auto text-gray-300 mb-4" />
-        <p class="text-gray-500">No leaderboard data available</p>
-      </div>
-
-      <table v-else class="w-full">
-          <thead class="bg-gray-50 border-b border-gray-200">
-          <tr>
-            <th class="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase">Rank</th>
-            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase">User</th>
-            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
-            <th class="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase">Total Weight (kg)</th>
-            <th class="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase">Carbon Saved (kg)</th>
-            <th class="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase">Submissions</th>
-            <th v-if="isSuperAdmin" class="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="user in leaderboard" :key="user.user_id" class="hover:bg-gray-50">
-            <td class="px-6 py-5 text-center">
-              <span 
-                class="inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold"
-                :class="{
-                  'bg-yellow-100 text-yellow-700': user.rank === 1,
-                  'bg-gray-200 text-gray-700': user.rank === 2,
-                  'bg-amber-100 text-amber-700': user.rank === 3,
-                  'bg-gray-50 text-gray-500': user.rank > 3
-                }"
-              >
-                {{ user.rank }}
-              </span>
-            </td>
-            <td class="px-6 py-5">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold">
-                  {{ user.nickname?.charAt(0) || 'U' }}
-                </div>
-                <div>
-                  <p class="font-medium text-gray-900">{{ user.nickname }}</p>
-                  <p class="text-sm text-gray-500">{{ user.email }}</p>
-                </div>
-              </div>
-            </td>
-            <td class="px-6 py-5 text-gray-500 text-sm">
-              {{ user.user_id }}
-            </td>
-            <td class="px-6 py-5 text-right">
-              <span class="font-medium text-gray-900">{{ formatWeight(user.total_weight) }}</span>
-            </td>
-            <td class="px-6 py-5 text-right">
-              <span class="font-medium text-green-600">{{ formatWeight(user.carbon_saved || user.total_weight * 0.5) }}</span>
-            </td>
-            <td class="px-6 py-5 text-center">
-              <span class="text-gray-600">{{ user.submission_count }}</span>
-            </td>
-            <td v-if="isSuperAdmin" class="px-6 py-5 text-center">
-              <button 
-                @click="fetchUserTransactions(user.user_id)"
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"
-              >
-                <Eye :size="14" />
-                View Transaction History
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Monthly History Tab -->
-    <div v-if="activeTab === 'history'" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div v-if="loading" class="p-12 text-center">
-        <RefreshCw class="animate-spin mx-auto text-blue-600" :size="32" />
-        <p class="mt-2 text-gray-500">Loading history...</p>
-      </div>
-
-      <div v-else-if="monthlyHistory.length === 0" class="p-12 text-center">
-        <History :size="48" class="mx-auto text-gray-300 mb-4" />
-        <p class="text-gray-500">No monthly champions history</p>
-        <p class="text-sm text-gray-400 mt-2">Use "Reset Leaderboard" to archive current winners</p>
-      </div>
-
-      <div v-else>
-        <div v-for="monthGroup in [...new Set(monthlyHistory.map(h => `${h.month} ${h.year}`))]" :key="monthGroup" class="border-b border-gray-100 last:border-0">
-          <div class="px-6 py-3 bg-gray-50 border-b border-gray-100">
-            <h3 class="font-semibold text-gray-900">{{ monthGroup }}</h3>
-          </div>
-          <table class="w-full">
-            <tbody class="divide-y divide-gray-100">
-              <tr v-for="champion in monthlyHistory.filter(h => `${h.month} ${h.year}` === monthGroup)" :key="champion.id" class="hover:bg-gray-50">
-                <td class="px-6 py-4">
-                  <div class="flex items-center gap-3">
-                    <span 
-                      class="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold"
-                      :class="{
-                        'bg-yellow-100 text-yellow-700': champion.rank === 1,
-                        'bg-gray-200 text-gray-700': champion.rank === 2,
-                        'bg-amber-100 text-amber-700': champion.rank === 3,
-                        'bg-gray-50 text-gray-500': champion.rank > 3
-                      }"
-                    >
-                      {{ champion.rank }}
-                    </span>
-                    <span class="font-medium text-gray-900">{{ champion.nickname }}</span>
-                  </div>
-                </td>
-                <td class="px-6 py-4 text-right text-gray-600">
-                  {{ formatWeight(champion.total_weight) }} kg
-                </td>
-                <td class="px-6 py-4 text-right text-green-600 font-medium">
-                  {{ formatWeight(champion.total_points) }}
-                </td>
-                <td class="px-6 py-4 text-right text-gray-500 text-sm">
-                  {{ formatDate(champion.archived_at) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
 
-    <!-- Transaction Modal -->
-    <div v-if="showTransactionModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeTransactionModal">
-      <div class="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-hidden">
-        <div class="px-8 py-5 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <h3 class="text-lg font-semibold text-gray-900">Transaction History - Audit Trail</h3>
-            <p class="text-sm text-gray-500">User ID: {{ selectedUser }}</p>
-          </div>
-          <button @click="closeTransactionModal" class="text-gray-400 hover:text-gray-600 p-1">
-            <span class="text-2xl">&times;</span>
-          </button>
-        </div>
-        <div class="overflow-auto max-h-[60vh] p-4">
-          <table class="w-full">
-            <thead class="bg-gray-50 sticky top-0">
-              <tr>
-                <th class="px-5 py-4 text-left text-xs font-semibold text-gray-500 uppercase">Date & Time</th>
-                <th class="px-5 py-4 text-left text-xs font-semibold text-gray-500 uppercase">Machine</th>
-                <th class="px-5 py-4 text-right text-xs font-semibold text-gray-500 uppercase">Weight (kg)</th>
-                <th class="px-5 py-4 text-right text-xs font-semibold text-gray-500 uppercase">Points</th>
-                <th class="px-5 py-4 text-center text-xs font-semibold text-gray-500 uppercase">Multiplier</th>
-                <th class="px-5 py-4 text-center text-xs font-semibold text-gray-500 uppercase">Status</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-              <tr v-for="trans in userTransactions" :key="trans.id" class="hover:bg-gray-50">
-                <td class="px-5 py-4 text-sm text-gray-600">
-                  {{ formatDate(trans.created_at) }}
-                </td>
-                <td class="px-5 py-4 text-sm text-gray-900">
-                  {{ trans.device_no || 'N/A' }}
-                </td>
-                <td class="px-5 py-4 text-sm text-gray-900 text-right font-medium">
-                  {{ formatWeight(trans.total_weight) }}
-                </td>
-                <td class="px-5 py-4 text-sm text-emerald-600 text-right font-medium">
-                  {{ trans.calculated_value }}
-                </td>
-                <td class="px-5 py-4 text-center">
-                  <span class="px-2 py-0.5 text-xs font-medium rounded-full"
-                    :class="{
-                      'bg-purple-100 text-purple-700': trans.multiplier >= 3,
-                      'bg-blue-100 text-blue-700': trans.multiplier >= 2 && trans.multiplier < 3,
-                      'bg-gray-100 text-gray-700': trans.multiplier < 2
-                    }"
+    <!-- ================================ -->
+    <!-- TABS (id-based)                   -->
+    <!-- ================================ -->
+    <div class="flex border-b border-gray-100">
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        @click="setTab(tab.id)"
+        class="flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors"
+        :class="activeTab === tab.id
+          ? 'text-blue-600 border-b-2 border-blue-600 font-semibold'
+          : 'text-gray-500 hover:text-gray-700'"
+      >
+        <component :is="tab.icon" :size="16" />
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <!-- ================================ -->
+    <!-- SUMMARY METRICS                  -->
+    <!-- ================================ -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <p class="text-xs text-gray-500 uppercase font-semibold tracking-wide">Total Users</p>
+        <p class="text-3xl font-bold text-gray-900 mt-1">{{ (activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).length }}</p>
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <p class="text-xs text-gray-500 uppercase font-semibold tracking-wide">Total Weight</p>
+        <p class="text-3xl font-bold text-gray-900 mt-1">{{ ((activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).reduce((s: number, u: any) => s + u.totalWeight, 0) / 1000).toFixed(1) }}k <span class="text-sm font-normal text-gray-500">kg</span></p>
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <p class="text-xs text-gray-500 uppercase font-semibold tracking-wide">Carbon Saved</p>
+        <p class="text-3xl font-bold text-emerald-600 mt-1">{{ ((activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).reduce((s: number, u: any) => s + u.carbonSaved, 0) / 1000).toFixed(1) }}k <span class="text-sm font-normal text-gray-500">kg</span></p>
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <p class="text-xs text-gray-500 uppercase font-semibold tracking-wide">Avg / User</p>
+        <p class="text-3xl font-bold text-gray-900 mt-1">{{ (activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).length > 0 ? ((activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).reduce((s: number, u: any) => s + u.totalWeight, 0) / (activeTab === 'monthly' ? monthlyLeaderboards : leaderboards).length).toFixed(1) : 0 }} <span class="text-sm font-normal text-gray-500">kg</span></p>
+      </div>
+    </div>
+
+    <!-- ================================ -->
+    <!-- LEADERBOARD TABLE (rounded-3xl p-6) -->
+    <!-- ================================ -->
+    <div class="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-6">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead class="text-gray-500 text-xs uppercase font-semibold">
+            <tr>
+              <th class="px-6 py-4">Rank</th>
+              <th class="px-6 py-4">User</th>
+              <th class="px-6 py-4">ID</th>
+              <th class="px-6 py-4">Total Weight</th>
+              <th class="px-6 py-4">Carbon Saved</th>
+              <th class="px-6 py-4">Submissions</th>
+              <th class="px-6 py-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr
+              v-for="user in (activeTab === 'monthly' ? monthlyLeaderboards : leaderboards)"
+              :key="user.id"
+              class="hover:bg-gray-50 transition-colors"
+            >
+              <!-- Rank -->
+              <td class="px-6 py-4">
+                <span
+                  class="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold border"
+                  :class="rankBadgeClass(user.rank)"
+                >
+                  {{ user.rank }}
+                </span>
+              </td>
+
+              <!-- User (hex color) -->
+              <td class="px-6 py-4">
+                <div class="flex items-center gap-3">
+                  <span
+                    class="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                    :style="{ backgroundColor: user.color }"
                   >
-                    {{ trans.multiplier || 1 }}x
+                    {{ user.initial }}
                   </span>
-                </td>
-                <td class="px-5 py-4 text-center">
-                  <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">
-                    {{ trans.status }}
-                  </span>
-                </td>
-              </tr>
-              <tr v-if="userTransactions.length === 0">
-                <td colspan="6" class="px-5 py-8 text-center text-gray-500">
-                  No transactions found
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                  <span class="text-sm font-bold text-gray-900">{{ user.name }}</span>
+                </div>
+              </td>
+
+              <!-- ID -->
+              <td class="px-6 py-4">
+                <span class="text-sm text-gray-400 font-mono">{{ user.id }}</span>
+              </td>
+
+              <!-- Total Weight -->
+              <td class="px-6 py-4">
+                <span class="text-sm font-bold text-gray-900">{{ user.totalWeight.toFixed(1) }} <span class="text-xs font-normal text-gray-400">kg</span></span>
+              </td>
+
+              <!-- Carbon Saved -->
+              <td class="px-6 py-4">
+                <span class="inline-flex items-center gap-1 text-sm font-bold text-emerald-600">
+                  <Leaf :size="14" />
+                  {{ user.carbonSaved.toFixed(1) }} kg
+                </span>
+              </td>
+
+              <!-- Submissions -->
+              <td class="px-6 py-4">
+                <span class="text-sm font-bold text-gray-900 text-center block">{{ user.submissions }}</span>
+              </td>
+
+              <!-- Actions -->
+              <td class="px-6 py-4">
+                <button
+                  @click="viewHistory(user)"
+                  class="flex items-center gap-1.5 border border-blue-100 bg-blue-50/50 hover:bg-blue-100 text-blue-600 rounded-lg px-3 py-1.5 text-xs font-semibold transition"
+                >
+                  <Eye :size="14" />
+                  View History
+                </button>
+              </td>
+            </tr>
+
+            <tr v-if="leaderboardLoading">
+              <td colspan="7" class="px-6 py-12 text-center text-gray-400 text-sm">Loading leaderboard...</td>
+            </tr>
+            <tr v-else-if="leaderboards.length === 0">
+              <td colspan="7" class="px-6 py-12 text-center text-gray-400 text-sm">
+                <Trophy class="mx-auto text-gray-200 mb-3" :size="48" />
+                No leaderboard data
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <!-- Reset Confirmation Modal -->
-    <div v-if="showResetConfirm" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showResetConfirm = false">
-      <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-        <div class="flex items-center gap-3 mb-4">
-          <div class="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
-            <AlertTriangle :size="24" class="text-emerald-600" />
+  </div>
+
+    <!-- History Modal -->
+    <Teleport to="body">
+      <div v-if="showHistoryModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click="showHistoryModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden" @click.stop>
+          <div class="flex items-center justify-between p-5 border-b border-gray-100">
+            <div>
+              <h3 class="text-lg font-bold text-gray-900">Recycling History</h3>
+              <p v-if="selectedUser" class="text-sm text-gray-500">{{ selectedUser.nickname }} — {{ selectedUser.total_weight?.toFixed(1) }} kg total</p>
+            </div>
+            <button @click="showHistoryModal = false" class="p-2 rounded-full bg-gray-100 hover:bg-gray-200 transition">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <div>
-            <h3 class="text-lg font-semibold text-gray-900">Reset Leaderboard?</h3>
-            <p class="text-sm text-gray-500">This action archives current top users</p>
+          <div class="p-5 overflow-y-auto max-h-[60vh]">
+            <div v-if="historyLoading" class="text-center py-8 text-gray-400">Loading...</div>
+            <div v-else-if="userHistory.length === 0" class="text-center py-8 text-gray-400">No submissions found</div>
+            <table v-else class="w-full text-left text-sm">
+              <thead class="text-xs text-gray-500 uppercase">
+                <tr><th class="pb-2 pr-2">Date</th><th class="pb-2 pr-2">Machine</th><th class="pb-2 pr-2">Type</th><th class="pb-2 pr-2 text-right">Weight</th><th class="pb-2 pr-2 text-right">Points</th><th class="pb-2 text-right">Status</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in userHistory" :key="item.id" class="border-t border-gray-50">
+                  <td class="py-2 pr-2 text-gray-600">{{ item.submitted_at?.substring(0,10) }}</td>
+                  <td class="py-2 pr-2 font-mono text-xs text-gray-500">{{ item.device_no?.substring(0,8) || '-' }}</td>
+                  <td class="py-2 pr-2 text-gray-700">{{ item.waste_type || '-' }}</td>
+                  <td class="py-2 pr-2 text-right font-mono">{{ (item.api_weight || 0).toFixed(2) }}</td>
+                  <td class="py-2 pr-2 text-right font-mono">{{ (item.calculated_value || 0).toFixed(2) }}</td>
+                  <td class="py-2 text-right"><span :class="'text-xs font-semibold px-2 py-0.5 rounded-full ' + (item.status === 'VERIFIED' ? 'bg-green-100 text-green-700' : item.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')">{{ item.status }}</span></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </div>
-        <p class="text-gray-600 mb-6">
-          Are you sure? This will archive the current Top 10 into the Monthly Champions table and clear current scores.
-        </p>
-        <div class="flex gap-3">
-          <button 
-            @click="showResetConfirm = false"
-            class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button 
-            @click="handleResetLeaderboard"
-            :disabled="loading"
-            class="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
-          >
-            {{ loading ? 'Resetting...' : 'Confirm Reset' }}
-          </button>
         </div>
       </div>
-    </div>
-  </div>
+    </Teleport>
+
 </template>

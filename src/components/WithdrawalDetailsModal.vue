@@ -46,7 +46,7 @@ const runAudit = async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 userId: props.withdrawal.user_id, 
-                phone: props.withdrawal.users?.phone 
+                phone: props.withdrawal.user_phone 
             })
         });
         auditResult.value = await response.json();
@@ -125,11 +125,11 @@ const handleReject = () => {
           <div class="grid grid-cols-2 gap-4 text-sm">
              <div>
                 <span class="block text-xs text-gray-500">Nickname</span>
-                <span class="font-medium text-gray-900">{{ withdrawal.users?.nickname || 'Guest' }}</span>
+                <span class="font-medium text-gray-900">{{ withdrawal.user_nickname || 'Guest' }}</span>
              </div>
              <div>
                 <span class="block text-xs text-gray-500">Phone Number</span>
-                <span class="font-mono text-gray-700">{{ withdrawal.users?.phone || '-' }}</span>
+                <span class="font-mono text-gray-700">{{ withdrawal.user_phone || '-' }}</span>
              </div>
              <div class="col-span-2">
                 <span class="block text-xs text-gray-500">Payment To</span>

@@ -39,44 +39,22 @@ export function useSubmissionReviews() {
     const currentPage = ref(1);
     const itemsPerPage = ref(10);
 
-    // --- Computed Logic ---
-    const filteredReviews = computed(() => {
-        return reviews.value.filter(item => {
-            // Handle new status values vs legacy
-            let statusMatch = false;
-            // @ts-ignore - status types mismatch with legacy values
-            if (activeStatusTab.value === 'PENDING') {
-                // @ts-ignore
-                statusMatch = item.status === 'PENDING' || item.status === 'Pending';
-            // @ts-ignore
-            } else if (activeStatusTab.value === 'FLAGGED') {
-                statusMatch = item.status === 'Flagged' || item.is_suspicious === true;
-            // @ts-ignore
-            } else if (activeStatusTab.value === 'VERIFIED' || activeStatusTab.value === 'APPROVED') {
-                // @ts-ignore
-                statusMatch = item.status === 'VERIFIED' || item.status === 'Approved';
-            } else {
-                statusMatch = item.status === activeStatusTab.value;
-            }
-            
-            if (!statusMatch) return false;
-            const q = searchFilters.value.search.toLowerCase();
-            if (q) {
-                const match = (item.users?.phone || '').includes(q) ||
-                    (item.device_no || '').toLowerCase().includes(q) ||
-                    (item.vendor_record_id || '').toLowerCase().includes(q);
-                if (!match) return false;
-            }
-            if (searchFilters.value.wasteType && !item.waste_type?.includes(searchFilters.value.wasteType)) return false;
-            if (searchFilters.value.machineId && item.device_no !== searchFilters.value.machineId) return false;
-            if (searchFilters.value.startDate || searchFilters.value.endDate) {
-                if (!item.submitted_at) return false;
-                const itemDate = item.submitted_at.split('T')[0] || '';
-                if (searchFilters.value.startDate && itemDate < searchFilters.value.startDate) return false;
-                if (searchFilters.value.endDate && itemDate > searchFilters.value.endDate) return false;
-            }
-            return true;
-        });
+    // --- Filtered Data (shallow ref to avoid deep reactivity on large arrays) ---
+    const filteredReviews = ref<any[]>([]);
+    
+    function filterByTab(tab: string) {
+        if (tab === 'PENDING') return reviews.value.filter((r: any) => r.status === 'PENDING' || r.status === 'Pending');
+        if (tab === 'FLAGGED') return reviews.value.filter((r: any) => r.status === 'Flagged' || r.is_suspicious === true);
+        if (tab === 'APPROVED' || tab === 'VERIFIED') return reviews.value.filter((r: any) => r.status === 'VERIFIED' || r.status === 'Approved');
+        return reviews.value.filter((r: any) => r.status === tab);
+    }
+    
+    // Trigger re-filter when tab changes
+    watch(activeStatusTab, (tab) => {
+        const filtered = filterByTab(tab);
+        // Use shallowRef to avoid deep proxy wrapping on large arrays
+        filteredReviews.value = filtered;
+        currentPage.value = 1;
     });
 
     const totalPages = computed(() => Math.ceil(filteredReviews.value.length / itemsPerPage.value));
@@ -87,7 +65,8 @@ export function useSubmissionReviews() {
         return filteredReviews.value.slice(start, end);
     });
 
-    watch(filteredReviews, () => { currentPage.value = 1; });
+    // Reset page when filters change
+    watch([activeStatusTab, searchFilters], () => { currentPage.value = 1; }, { deep: true });
 
     // --- Actions ---
 
@@ -107,8 +86,9 @@ export function useSubmissionReviews() {
         try {
             let query = supabase
                 .from('submission_reviews')
-                .select(`*, users(nickname, avatar_url, phone)`)
-                .order('submitted_at', { ascending: false });
+                .select('*')
+                .order('submitted_at', { ascending: false })
+                .limit(500); // Limit to 500 to prevent Vue reactivity issues
 
             // VIEWER role can see ALL data, others get filtered by merchant
             // Check VIEWER first before checking merchantId
@@ -124,6 +104,7 @@ export function useSubmissionReviews() {
             if (data) {
                 console.log("SubmissionReviews: Setting reviews to", data.length, "records");
                 reviews.value = data as SubmissionReview[];
+                filterByTab();
             }
             // Demo fallback
             if (reviews.value.length === 0) {
@@ -145,6 +126,7 @@ export function useSubmissionReviews() {
                     submitted_at: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
                     users: { nickname: `User ${i + 1}`, avatar_url: '', phone: '1234567890' }
                 })) as unknown as SubmissionReview[];
+                filterByTab();
             }
         } catch (err) {
             console.error("Fetch Error:", err);

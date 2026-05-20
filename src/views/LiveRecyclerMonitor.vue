@@ -20,7 +20,7 @@ interface ActiveRecycler {
   nickname: string;
   phone: string;
   avatar_url: string | null;
-  total_weight_recycled: number;
+  total_weight: number;
   last_submission_at: string | null;
   machine_name: string;
   machine_id: string;
@@ -47,17 +47,10 @@ const fetchActiveRecyclers = async () => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
+    // 1. Fetch verified submissions this month (no joins needed)
     let query = supabase
       .from('submission_reviews')
-      .select(`
-        id,
-        user_id,
-        users(id, nickname, phone, avatar_url, total_weight_recycled),
-        device_no,
-        machines(id, name, device_no),
-        submitted_at,
-        api_weight
-      `)
+      .select('id, user_id, device_no, submitted_at, api_weight')
       .eq('status', 'VERIFIED')
       .gte('submitted_at', startOfMonth.toISOString())
       .order('submitted_at', { ascending: false });
@@ -66,14 +59,37 @@ const fetchActiveRecyclers = async () => {
       query = query.eq('merchant_id', auth.merchantId);
     }
 
-    const { data, error: fetchError } = await query;
-    
+    const { data: submissions, error: fetchError } = await query;
     if (fetchError) throw fetchError;
+    if (!submissions || submissions.length === 0) {
+      activeRecyclers.value = [];
+      loading.value = false;
+      return;
+    }
 
+    // 2. Get unique user IDs and fetch their profiles
+    const uniqueUserIds = [...new Set(submissions.map(s => s.user_id))];
+    const { data: userProfiles } = await supabase
+      .from('users')
+      .select('user_id, nickname, phone, total_weight')
+      .in('user_id', uniqueUserIds);
+
+    const userLookup = new Map((userProfiles || []).map(u => [u.user_id, u]));
+
+    // 3. Get machine names
+    const uniqueDevices = [...new Set(submissions.map(s => s.device_no).filter(Boolean))];
+    const { data: machineProfiles } = await supabase
+      .from('machines')
+      .select('device_no, name')
+      .in('device_no', uniqueDevices);
+    const machineLookup = new Map((machineProfiles || []).map(m => [m.device_no, m.name || m.device_no]));
+
+    // 4. Build user map from submissions
     const userMap = new Map<string, ActiveRecycler>();
     
-    for (const item of data || []) {
+    for (const item of submissions) {
       const userId = item.user_id;
+      const profile = userLookup.get(userId);
       const submissionDate = new Date(item.submitted_at);
       const isOnline = submissionDate >= threeDaysAgo;
       
@@ -81,13 +97,13 @@ const fetchActiveRecyclers = async () => {
         userMap.set(userId, {
           id: item.id,
           user_id: userId,
-          nickname: item.users?.nickname || 'Unknown User',
-          phone: item.users?.phone || '',
-          avatar_url: item.users?.avatar_url || null,
-          total_weight_recycled: item.users?.total_weight_recycled || 0,
+          nickname: profile?.nickname || 'User #' + userId.slice(-4),
+          phone: profile?.phone || '',
+          avatar_url: null,
+          total_weight: Number(profile?.total_weight || 0),
           last_submission_at: item.submitted_at,
-          machine_name: item.machines?.name || item.device_no || '',
-          machine_id: item.machines?.device_no || item.device_no || '',
+          machine_name: machineLookup.get(item.device_no) || item.device_no || 'Unknown',
+          machine_id: item.device_no || '',
           monthly_goal: MONTHLY_GOAL,
           progress_percentage: 0,
           is_online: isOnline
@@ -103,7 +119,7 @@ const fetchActiveRecyclers = async () => {
 
     const result = Array.from(userMap.values()).map(user => ({
       ...user,
-      progress_percentage: Math.min(100, Math.round((user.total_weight_recycled / user.monthly_goal) * 100))
+      progress_percentage: Math.min(100, Math.round((user.total_weight / user.monthly_goal) * 100))
     }));
 
     activeRecyclers.value = result;
@@ -151,7 +167,7 @@ const exportToExcel = () => {
     'User': item.nickname,
     'Phone': item.phone,
     'Machine Location': item.machine_name,
-    'Total Recycled (kg)': item.total_weight_recycled,
+    'Total Recycled (kg)': item.total_weight,
     'Monthly Goal (kg)': item.monthly_goal,
     'Progress %': item.progress_percentage,
     'Last Submission': formatDate(item.last_submission_at),
@@ -300,7 +316,7 @@ onMounted(async () => {
 
               <td class="px-6 py-4">
                 <div class="flex items-center">
-                  <span class="text-lg font-bold text-gray-900">{{ user.total_weight_recycled.toFixed(1) }}</span>
+                  <span class="text-lg font-bold text-gray-900">{{ user.total_weight.toFixed(1) }}</span>
                   <span class="text-xs text-gray-500 ml-1">kg</span>
                 </div>
               </td>

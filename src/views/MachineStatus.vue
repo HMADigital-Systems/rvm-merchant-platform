@@ -528,14 +528,7 @@ watch(machines, () => {
         <List :size='18' />
         Machine List
       </button>
-      <button 
-        @click="activeTab = 'map'"
-        class='flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all'
-        :class='mapTabClass'
-      >
-        <MapIcon :size='18' />
-        Live Map View
-      </button>
+
     </div>
 
     <!-- Machine List View -->
@@ -558,7 +551,7 @@ watch(machines, () => {
                 <td colspan='6' class='px-6 py-10 text-center text-gray-400'>Syncing with machines...</td>
             </tr>
 
-            <tr v-for='m in machines' :key='m.deviceNo' class='hover:bg-gray-50/80 transition-colors'>
+            <tr v-for='m in filteredMachines' :key='m.deviceNo' class='hover:bg-gray-50/80 transition-colors'>
                 <td class='px-6 py-5 align-top'>
                     <div class='flex flex-col gap-2 items-start'>
                     <span :class='`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusBadge(m.statusCode)}`'>

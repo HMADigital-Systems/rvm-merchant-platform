@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 1. Get User (ADD nickname to selection)
     const { data: user } = await supabase
         .from('users')
-        .select('id, phone, nickname, avatar_url') // Fetch existing profile
+        .select('id, phone, nickname') // Fetch existing profile (no avatar_url column)
         .eq('phone', phone)
         .single();
 
@@ -398,10 +398,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ? currentName // Keep "Google Name"
         : (profile?.data?.nikeName || profile?.data?.name || 'User'); // Fallback
 
-    // 2. Determine Avatar: Trust Local DB if valid
-    const finalAvatar = user.avatar_url 
-        ? user.avatar_url 
-        : (profile?.data?.imgUrl || profile?.data?.avatarUrl);
+    // 2. Determine Avatar from Vendor API
+    const finalAvatar = profile?.data?.imgUrl || profile?.data?.avatarUrl || '';
 
     // 3. Update DB
     await supabase.from('users').update({
@@ -409,8 +407,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         total_weight: Number(totalImportedWeight.toFixed(2)),
         last_synced_at: new Date().toISOString(),
         nickname: finalNickname, 
-        vendor_user_no: profile?.data?.userNo,
-        avatar_url: finalAvatar
+        vendor_user_no: profile?.data?.userNo
     }).eq('id', user.id);
 
     const isProduction = process.env.NODE_ENV === 'production';

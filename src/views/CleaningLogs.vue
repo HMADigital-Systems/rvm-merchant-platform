@@ -3,7 +3,7 @@ import { onMounted, ref, computed, watch } from 'vue';
 import { useCleaningRecords } from '../composables/useCleaningRecords';
 import { useAuthStore } from '../stores/auth';
 import CleaningVerificationModal from '../components/CleaningVerificationModal.vue';
-import { Trash2, Clock, Search, Scale, User, ImageIcon, CheckCircle, XCircle, RefreshCw, Download } from 'lucide-vue-next';
+import { Truck, Clock, Search, Scale, User, ImageIcon, CheckCircle, XCircle, RefreshCw, Download, MapPin } from 'lucide-vue-next';
 import ExportSummaryModal from '../components/ExportSummaryModal.vue';
 
 const { records, loading, fetchCleaningLogs, approveCleaning, rejectCleaning, formatDate } = useCleaningRecords();
@@ -20,13 +20,14 @@ const filteredRecords = computed(() => {
   if (!searchTerm.value) return records.value;
   const term = searchTerm.value.toLowerCase();
   return records.value.filter(r => 
-    r.device_no.includes(term) || 
-    r.waste_type.toLowerCase().includes(term)
+    r.device_no?.includes(term) || 
+    r.waste_type?.toLowerCase().includes(term) ||
+    r.cleaner_name?.toLowerCase().includes(term)
   );
 });
 
 const handleRefresh = async () => {
-    await fetchCleaningLogs();     // Refreshes the table
+    await fetchCleaningLogs();
 };
 
 // Actions
@@ -51,9 +52,7 @@ const handleReject = async (reason: string) => {
     showModal.value = false;
 };
 
-// ------------------------------------
-// ✅ 3. ADD SELECTION & EXPORT LOGIC
-// ------------------------------------
+// Selection & Export
 const selectedIds = ref(new Set<string>());
 
 const toggleSelection = (id: string) => {
@@ -91,28 +90,12 @@ onMounted(() => {
   fetchCleaningLogs();
 });
 
-// Watch for auth to finish loading, then refetch
 watch(() => auth.loading, (isLoading) => {
-  if (!isLoading) {
-    console.log("CleaningLogs: Auth loaded, refetching data...");
-    fetchCleaningLogs();
-  }
+  if (!isLoading) fetchCleaningLogs();
 });
 
-// Also watch for role changes
 watch(() => auth.role, (newRole) => {
-  if (newRole) {
-    console.log("CleaningLogs: Role set to:", newRole);
-    fetchCleaningLogs();
-  }
-});
-
-// Also watch for role to be set
-watch(() => auth.role, (newRole) => {
-  if (newRole) {
-    console.log("CleaningLogs: Role set to " + newRole + ", refetching data...");
-    fetchCleaningLogs();
-  }
+  if (newRole) fetchCleaningLogs();
 });
 </script>
 
@@ -121,16 +104,16 @@ watch(() => auth.role, (newRole) => {
     <!-- Stats Cards -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-        <p class="text-xs text-gray-500 uppercase font-semibold">Total Records</p>
+        <p class="text-xs text-gray-500 uppercase font-semibold">Total Tasks</p>
         <p class="text-2xl font-bold text-gray-900">{{ records.length }}</p>
       </div>
       <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-        <p class="text-xs text-gray-500 uppercase font-semibold">Live Submissions</p>
-        <p class="text-2xl font-bold text-green-600">{{ records.filter(r => r.is_live).length }}</p>
+        <p class="text-xs text-gray-500 uppercase font-semibold">RVM Collections</p>
+        <p class="text-2xl font-bold text-blue-600">{{ records.filter(r => r.source_type === 'RVM').length }}</p>
       </div>
       <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-        <p class="text-xs text-gray-500 uppercase font-semibold">Cleaning Events</p>
-        <p class="text-2xl font-bold text-blue-600">{{ records.filter(r => !r.is_live).length }}</p>
+        <p class="text-xs text-gray-500 uppercase font-semibold">On-Demand</p>
+        <p class="text-2xl font-bold text-purple-600">{{ records.filter(r => r.source_type === 'ON_DEMAND').length }}</p>
       </div>
       <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
         <p class="text-xs text-gray-500 uppercase font-semibold">Total Weight</p>
@@ -141,10 +124,10 @@ watch(() => auth.role, (newRole) => {
     <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl border border-gray-100 shadow-sm gap-4">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 flex items-center">
-          <Trash2 class="mr-3 text-emerald-600" :size="28" />
-          Waste Disposal Logs
+          <Truck class="mr-3 text-emerald-600" :size="28" />
+          Collection Tasks
         </h1>
-        <p class="text-sm text-gray-500 mt-1">Monitor waste collection from recycling submissions and cleaning events.</p>
+        <p class="text-sm text-gray-500 mt-1">Collector assignments — RVM machine cleanup and on-demand pickups.</p>
       </div>
 
       <div class="flex gap-3 w-full md:w-auto">
@@ -171,7 +154,7 @@ watch(() => auth.role, (newRole) => {
             <input 
             v-model="searchTerm"
             type="text" 
-            placeholder="Search Device ID..." 
+            placeholder="Search device/collector..." 
             class="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
         </div>
@@ -182,7 +165,6 @@ watch(() => auth.role, (newRole) => {
       <table class="w-full text-left">
         <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
           <tr>
-            
             <th class="px-6 py-4 w-10">
                 <input 
                     type="checkbox" 
@@ -192,21 +174,21 @@ watch(() => auth.role, (newRole) => {
                 />
             </th>
             <th class="px-6 py-4">Date/Time</th>
-            <th class="px-6 py-4">Machine</th>
-            <th class="px-6 py-4 text-center">Source</th>
-            <th class="px-6 py-4 text-center">Snapshot</th> <th class="px-6 py-4">Waste Type</th>
+            <th class="px-6 py-4">Source</th>
+            <th class="px-6 py-4">Location</th>
+            <th class="px-6 py-4">Waste Type</th>
             <th class="px-6 py-4 text-center">Weight</th>
-            <th class="px-6 py-4">Operator / User</th>
+            <th class="px-6 py-4">Collector</th>
             <th class="px-6 py-4 text-center">Status</th>
             <th class="px-6 py-4 text-center">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
           <tr v-if="loading" class="animate-pulse">
-            <td colspan="9" class="p-8 text-center text-gray-400">Loading records...</td>
+            <td colspan="9" class="p-8 text-center text-gray-400">Loading collection tasks...</td>
           </tr>
           <tr v-else-if="filteredRecords.length === 0">
-            <td colspan="9" class="p-8 text-center text-gray-400">No cleaning records found.</td>
+            <td colspan="9" class="p-8 text-center text-gray-400">No collection tasks found.</td>
           </tr>
           
           <tr 
@@ -215,7 +197,6 @@ watch(() => auth.role, (newRole) => {
             :class="{'bg-emerald-50/50': selectedIds.has(item.id)}" 
             class="hover:bg-gray-50 transition-colors"
           >
-            
             <td class="px-6 py-4">
                 <input 
                     type="checkbox" 
@@ -227,31 +208,29 @@ watch(() => auth.role, (newRole) => {
             <td class="px-6 py-4">
               <div class="flex items-center text-sm text-gray-700 font-medium">
                 <Clock :size="16" class="mr-2 text-gray-400" />
-                {{ formatDate(item.cleaned_at) }}
+                {{ formatDate(item.cleaned_at || item.cleaned_at) }}
               </div>
             </td>
 
             <td class="px-6 py-4">
-              <span class="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                {{ item.device_no }}
+              <span v-if="item.source_type === 'RVM'" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                <Truck :size="12" /> RVM
               </span>
-            </td>
-
-            <td class="px-6 py-4 text-center">
-              <span v-if="item.is_live" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
-                Live
+              <span v-else-if="item.source_type === 'ON_DEMAND'" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
+                <MapPin :size="12" /> On-Demand
               </span>
-              <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+              <span v-else class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
                 Cleaning
               </span>
             </td>
 
-            <td class="px-6 py-4 text-center">
-                <div v-if="item.photo_url" class="h-10 w-10 mx-auto rounded-lg overflow-hidden border border-gray-200 bg-gray-50 relative group cursor-pointer" @click="openVerifyModal(item)">
-                    <img :src="item.photo_url.split(',')[0]" class="h-full w-full object-cover" />
-                    <div class="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors"></div>
-                </div>
-                <div v-else class="text-gray-300 flex justify-center"><ImageIcon :size="20" /></div>
+            <td class="px-6 py-4">
+              <span v-if="item.source_type === 'ON_DEMAND'" class="text-xs text-gray-600">
+                {{ item.customer_address || '-' }}
+              </span>
+              <span v-else class="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                {{ item.device_no }}
+              </span>
             </td>
 
             <td class="px-6 py-4">
@@ -279,25 +258,31 @@ watch(() => auth.role, (newRole) => {
               <span v-if="item.status === 'VERIFIED'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-200">
                 Verified
               </span>
+              <span v-else-if="item.status === 'COLLECTED'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                Collected
+              </span>
+              <span v-else-if="item.status === 'ASSIGNED'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
+                Assigned
+              </span>
               <span v-else-if="item.status === 'REJECTED'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-200">
                 Rejected
               </span>
-              <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
-                Pending
+              <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700 border border-gray-200">
+                {{ item.status }}
               </span>
             </td>
 
             <td class="px-6 py-4 text-center">
               <button 
-                v-if="item.status === 'PENDING'"
+                v-if="item.status === 'COLLECTED' || item.status === 'ASSIGNED'"
                 @click="openVerifyModal(item)"
                 class="px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-800 transition-all shadow-sm"
               >
                 Review
               </button>
-              <div v-else class="flex justify-center text-gray-300">
-                  <CheckCircle v-if="item.status === 'VERIFIED'" :size="20" class="text-green-300" />
-                  <XCircle v-if="item.status === 'REJECTED'" :size="20" class="text-red-300" />
+              <div v-else class="flex justify-center">
+                  <CheckCircle v-if="item.status === 'VERIFIED'" :size="20" class="text-green-400" />
+                  <XCircle v-if="item.status === 'REJECTED'" :size="20" class="text-red-400" />
               </div>
             </td>
 

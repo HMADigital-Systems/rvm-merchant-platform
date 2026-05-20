@@ -43,13 +43,13 @@ export function useDashboardStats() {
     // VIEWER role sees ALL data (no merchant filter)
     // ADMIN/SUPER_ADMIN/COLLECTOR/AGENT see only their merchant's data
     const applyFilter = (query: any) => {
-        // VIEWER role can see ALL data (no filter) - check this FIRST
+        // VIEWER role can see ALL data (no filter)
         if (userRole === 'VIEWER') return query;
         
-        // If no merchantId for non-VIEWER, show nothing
-        if (!userMerchantId) return query.eq('id', '00000000-0000-0000-0000-000000000000');
+        // If no merchantId (null), show ALL data (no merchant filter)
+        if (!userMerchantId) return query;
         
-        // ADMIN/SUPER_ADMIN/COLLECTOR/AGENT only see their merchant's data
+        // ADMIN/SUPER_ADMIN only see their merchant's data
         return query.eq('merchant_id', userMerchantId);
     };
 
@@ -63,8 +63,8 @@ export function useDashboardStats() {
       let pendingQuery = supabase.from('withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'PENDING');
       
       // B. Recent Activity Lists
-      let recWithdrawalsQuery = supabase.from('withdrawals').select('*, users(nickname, phone)').order('created_at', { ascending: false }).limit(5);
-      let recSubmissionsQuery = supabase.from('submission_reviews').select('*, users(nickname)').order('submitted_at', { ascending: false }).limit(5);
+      let recWithdrawalsQuery = supabase.from('withdrawals').select('*').order('created_at', { ascending: false }).limit(5);
+      let recSubmissionsQuery = supabase.from('submission_reviews').select('*').order('submitted_at', { ascending: false }).limit(5);
       let recCleaningQuery = supabase.from('cleaning_records').select('*').order('created_at', { ascending: false }).limit(5);
 
       // Apply Filters

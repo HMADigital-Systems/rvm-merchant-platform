@@ -118,18 +118,17 @@ const filteredUsers = computed(() => {
       return dateB - dateA;
     });
   } else if (activeFilter.value === 'top') {
-    // Top recyclers - highest display_weight (from useUserList)
-    result = [...result].sort((a, b) => (b.display_weight || 0) - (a.display_weight || 0));
+    // Top recyclers - highest total_weight / earnings
+    result = [...result].sort((a, b) => (b.total_weight || b.earnings || 0) - (a.total_weight || a.earnings || 0));
   } else if (activeFilter.value === 'active') {
-    // Active users - have submissions in last 30 days (by last_verified_submit)
+    // Active users - have recent submission reviews
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     result = result.filter(u => {
-      const lastSub = new Date(u.last_verified_submit || 0).getTime();
-      return lastSub >= thirtyDaysAgo;
-    }).sort((a, b) => {
-      const dateA = new Date(b.last_verified_submit || 0).getTime();
-      const dateB = new Date(a.last_verified_submit || 0).getTime();
-      return dateA - dateB;
+      const reviews = u.submission_reviews || [];
+      return reviews.some((r: any) => {
+        const subDate = new Date(r.submitted_at || r.created_at || 0).getTime();
+        return subDate >= thirtyDaysAgo && r.status === 'VERIFIED';
+      });
     });
   } else if (activeFilter.value === 'new') {
     // New registers - joined this month

@@ -24,11 +24,6 @@ const machineStore = useMachineStore();
 const auth = useAuthStore();
 const { machines, loading: machineLoading, viewerHasAssignments } = storeToRefs(machineStore);
 
-// Command Center
-const openCommandCenter = () => {
-  window.open('/command-center', '_blank');
-};
-
 // View mode toggle (machines: list vs map)
 const machineViewMode = ref<'list' | 'map'>('list');
 
@@ -108,7 +103,7 @@ const isCollector = computed(() => {
 const isSuperAdmin = computed(() => auth.role === 'SUPER_ADMIN');
 const isAdmin = computed(() => {
   const role = auth.role?.toUpperCase();
-  return role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'MERCHANT';
+  return role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'MERCHANT' || role === 'VIEWER';
 });
 
 // Collector-specific data
@@ -898,25 +893,26 @@ const fetchRecentSubmissionsWithUsers = async () => {
 const fetchCertificateStats = async () => {
   certificateStatsLoading.value = true;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return;
-
-    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/certificate-stats`, {
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const result = await response.json();
-    if (result.success && result.data) {
-      certificateStats.value = {
-        totalCertificatesIssued: result.data.totalCertificatesIssued || 0,
-        targetCompletionRate: result.data.completionRate || 0,
-        activeRecyclers: result.data.usersWhoCompleted || 0,
-        topUsers: []
-      };
-    }
+    // Count users with recycling activity (total_weight > 0)
+    const { count: activeRecyclers, error: countError } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .not('total_weight', 'is', null)
+      .gt('total_weight', 0);
+    
+    if (countError) console.error('Count error:', countError.message);
+    
+    // Count certificates (if table exists)
+    const { count: certCount } = await supabase
+      .from('user_certificates')
+      .select('*', { count: 'exact', head: true });
+    
+    certificateStats.value = {
+      totalCertificatesIssued: certCount || 0,
+      targetCompletionRate: certCount > 0 && activeRecyclers ? Math.round((certCount / activeRecyclers) * 100) : 0,
+      activeRecyclers: activeRecyclers || 0,
+      topUsers: []
+    };
   } catch (error) {
     console.error('Failed to fetch certificate stats:', error);
   } finally {
@@ -1068,6 +1064,10 @@ onMounted(async () => {
   machineStore.fetchMachines();
   fetchStats();
   
+  // Also fetch certificate stats on mount (watcher may not fire if auth is already loaded)
+  fetchCertificateStats();
+  fetchTopCertificateUsers();
+  
   // Watch for auth to finish loading, then refetch
   watch(() => auth.loading, async (isLoading) => {
     if (!isLoading) {
@@ -1204,15 +1204,7 @@ onMounted(async () => {
             <BarChart3 :size="16" />
             Analytics
           </button>
-          <!-- Live Command Center Button -->
-          <button 
-            @click="openCommandCenter"
-            class="flex items-center gap-2 bg-slate-900 text-emerald-400 px-4 py-2.5 rounded-xl hover:bg-slate-800 transition shadow-lg text-sm font-semibold border-2 border-emerald-500"
-            style="box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);"
-          >
-            <span class="h-2.5 w-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
-            Open Live Command Center
-          </button>
+
         </div>
       </div>
 
@@ -1254,80 +1246,7 @@ onMounted(async () => {
         </StatsCard>
       </div>
 
-      <!-- Environmental Impact Card (Admin/Merchant only) -->
-      <div v-if="!isAgent && !isCollector && isAdmin" class="bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-2xl p-6 shadow-lg mb-8">
-        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between">
-          <div class="mb-6 lg:mb-0">
-            <div class="flex items-center mb-2">
-              <Recycle class="text-white mr-2" :size="24" />
-              <h2 class="text-xl font-bold text-white">Environmental Impact</h2>
-            </div>
-            <p class="text-emerald-100 text-sm">CO2 Saved (2026-02-27 to 2026-03-31)</p>
-          </div>
-          
-          <div class="flex flex-col sm:flex-row gap-6 lg:ml-auto">
-            <div class="text-center lg:text-right">
-              <p class="text-emerald-100 text-xs uppercase tracking-wide mb-1">CO2 Saved</p>
-              <p class="text-3xl font-bold text-white">0.0 kg CO2</p>
-            </div>
-            <div class="text-center lg:text-right">
-              <p class="text-emerald-100 text-xs uppercase tracking-wide mb-1">Trees Equivalent</p>
-              <p class="text-3xl font-bold text-white">0.0 Trees</p>
-            </div>
-          </div>
-        </div>
 
-        <div class="mt-6 pt-4 border-t border-emerald-400/30">
-          <div class="flex flex-wrap items-center gap-4">
-            <div class="flex items-center gap-2">
-              <label class="text-emerald-100 text-sm">Custom Range</label>
-              <select class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50">
-                <option class="text-gray-800">Last 7 Days</option>
-                <option class="text-gray-800">Last 30 Days</option>
-                <option class="text-gray-800">Last 90 Days</option>
-                <option class="text-gray-800" selected>Custom Range</option>
-              </select>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-100 text-sm">From</span>
-              <input 
-                type="date" 
-                class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 [color-scheme:light]"
-              />
-            </div>
-
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-100 text-sm">To</span>
-              <input 
-                type="date" 
-                class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 [color-scheme:light]"
-              />
-            </div>
-
-            <div class="flex items-center gap-2">
-              <label class="text-emerald-100 text-sm">RVM Machine</label>
-              <select class="bg-white/20 border border-emerald-300/50 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/50 max-w-[200px]">
-                <option class="text-gray-800" value="">All Machines</option>
-                <option v-for="machine in machines" :key="machine.id" class="text-gray-800" :value="machine.id">
-                  {{ machine.name || machine.deviceNo }}
-                </option>
-              </select>
-            </div>
-
-            <div class="flex items-center gap-2 ml-auto">
-              <button class="flex items-center gap-2 bg-white text-emerald-700 hover:bg-emerald-50 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
-                <FileSpreadsheet :size="16" />
-                Export Excel
-              </button>
-              <button class="flex items-center gap-2 bg-emerald-700 text-white hover:bg-emerald-800 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
-                <FileText :size="16" />
-                Download PDF
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- Certificate Stats Overview (Admin/Merchant only) -->
       <div v-if="!isAgent && !isCollector && isAdmin" class="mb-8">
@@ -1346,22 +1265,10 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <div class="flex items-center gap-4">
-              <div class="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-200">
-                <Target :size="24" class="text-white" />
-              </div>
-              <div>
-                <p class="text-sm text-gray-500">Target Completion Rate</p>
-                <p class="text-2xl font-bold text-gray-900">
-                  {{ certificateStatsLoading ? '...' : certificateStats.targetCompletionRate }}%
-                </p>
-              </div>
-            </div>
-          </div>
 
-          <!-- Certificate Stats for SUPER_ADMIN -->
-          <div v-if="isSuperAdmin" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-green-300 transition-colors cursor-pointer" @click="$router.push('/live-recycler-monitor')">
+
+          <!-- Active Recyclers -->
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:border-green-300 transition-colors cursor-pointer" @click="$router.push('/live-recycler-monitor')">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-4">
                 <div class="h-12 w-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-200">
@@ -1521,46 +1428,6 @@ onMounted(async () => {
               <Recycle :size="32" class="mx-auto mb-2 opacity-50"/>
               <p class="text-sm">No recent recycling</p>
             </div>
-          </div>
-        </div>
-
-        <!-- Cleaning Logs Card (Not for Collector) -->
-        <div v-if="!isCollector" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col">
-          <div class="flex items-center justify-between mb-6">
-            <div class="flex items-center gap-2">
-              <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center shadow-md shadow-purple-200">
-                <Brush :size="16" class="text-white" />
-              </div>
-              <h3 class="text-base font-bold text-gray-900">
-                <span v-if="isAgent">My Machine Logs</span>
-                <span v-else>Cleaning Logs</span>
-              </h3>
-            </div>
-            <router-link to="/cleaning-logs" class="text-xs font-medium text-blue-600 hover:underline">View All</router-link>
-          </div>
-          <div class="flex-1 space-y-3">
-            <div v-for="c in (isAgent ? agentLogs : recentCleaning)" :key="c.id" class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-all border border-transparent hover:border-gray-100 group">
-              <div class="h-10 w-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                 <Wrench v-if="c.status === 'MAINTENANCE_COMPLETE' || c.status === 'ISSUE_REPORTED'" :size="18" />
-                 <CheckCircle2 v-else :size="18" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-bold text-gray-900 truncate">{{ c.machines?.device_name || c.machines?.name || c.device_no || 'Unknown Machine' }}</p>
-                <p class="text-xs text-gray-500">
-                  <span v-if="c.status === 'ISSUE_REPORTED'">Issue: {{ c.notes }}</span>
-                  <span v-else-if="c.status === 'MAINTENANCE_COMPLETE'">Maintenance completed</span>
-                  <span v-else-if="c.status === 'BIN_EMPTIED'">Bin emptied</span>
-                  <span v-else>{{ new Date(c.created_at).toLocaleDateString() }}</span>
-                </p>
-              </div>
-              <span 
-                class="text-[10px] px-2 py-1 rounded-full font-bold uppercase" 
-                :class="getStatusColor(c.status)"
-              >
-                {{ c.status }}
-              </span>
-            </div>
-            <div v-if="(isAgent ? agentLogs : recentCleaning).length === 0" class="text-center py-6 text-gray-400 text-sm">No logs found</div>
           </div>
         </div>
 

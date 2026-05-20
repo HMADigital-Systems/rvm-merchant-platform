@@ -1,4 +1,5 @@
 // src/composables/useCleaningRecords.ts
+// UPDATED: Now fetches ONLY collection_tasks (no more mixing with recycling submissions)
 import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../stores/auth';
@@ -10,41 +11,85 @@ export interface CleaningRecord {
     bag_weight_collected: number;
     cleaned_at: string;
     cleaner_name: string;
-    status: 'PENDING' | 'VERIFIED' | 'REJECTED';
+    status: 'PENDING' | 'VERIFIED' | 'REJECTED' | 'COLLECTED' | 'ASSIGNED' | 'IN_PROGRESS' | 'CANCELLED';
     photo_url?: string;
     admin_note?: string;
-    // Live data fields
     is_live?: boolean;
     phone?: string;
+    source_type?: string;
+    collector_id?: string;
+    priority?: string;
+    customer_address?: string;
+    customer_phone?: string;
 }
 
 export function useCleaningRecords() {
     const records = ref<CleaningRecord[]>([]);
     const loading = ref(false);
 
-    // 1. Fetch Logs - combines cleaning_records + live submission_reviews data
     const fetchCleaningLogs = async () => {
         const auth = useAuthStore();
         
         if (auth.loading || !auth.role) {
-            console.log("CleaningRecords: Waiting for auth/role...");
+            console.log("Collections: Waiting for auth/role...");
             return;
         }
         
         loading.value = true;
         try {
-            console.log("CleaningRecords: Fetching live data...");
+            console.log("Collections: Fetching collection_tasks...");
             
-            // Fetch actual cleaning records
-            const { data: cleanData, error: cleanError } = await supabase
+            // Try new collection_tasks table first
+            const { data: tasksData, error: tasksError } = await supabase
+                .from('collection_tasks')
+                .select('*')
+                .order('collected_at', { ascending: false, nullsFirst: false })
+                .order('assigned_at', { ascending: false })
+                .limit(200);
+
+            if (tasksError) {
+                console.log("Collections: collection_tasks not available, falling back to cleaning_records:", tasksError.message);
+                return await fetchOldCleaningLogs();
+            }
+            
+            records.value = (tasksData || []).map((r: any) => ({
+                id: r.id,
+                device_no: r.device_no || r.customer_address || '-',
+                waste_type: r.waste_type || 'Mixed',
+                bag_weight_collected: Number(r.bag_weight_collected || r.weight_kg || 0),
+                cleaned_at: r.collected_at || r.assigned_at || r.verified_at,
+                cleaner_name: r.collector_name || 'Unassigned',
+                status: r.status || 'ASSIGNED',
+                photo_url: (r.photo_urls || [])[0] || '',
+                admin_note: r.admin_notes || r.notes,
+                is_live: false,
+                source_type: r.source_type || 'RVM',
+                collector_id: r.collector_id,
+                priority: r.priority,
+                customer_address: r.customer_address,
+                customer_phone: r.customer_phone
+            }));
+
+            console.log(`[Collections] Loaded ${records.value.length} collection tasks`);
+            
+        } catch (err) {
+            console.error("Error fetching collection tasks:", err);
+            await fetchOldCleaningLogs();
+        } finally {
+            loading.value = false;
+        }
+    };
+
+    // Fallback: old cleaning_records table
+    const fetchOldCleaningLogs = async () => {
+        try {
+            const { data: cleanData } = await supabase
                 .from('cleaning_records')
                 .select('*')
                 .order('cleaned_at', { ascending: false })
-                .limit(100);
+                .limit(200);
 
-            if (cleanError) console.error("CleaningRecords: Error:", cleanError);
-            
-            const cleanRecords: CleaningRecord[] = (cleanData || []).map((r: any) => ({
+            records.value = (cleanData || []).map((r: any) => ({
                 id: r.id,
                 device_no: r.device_no || '-',
                 waste_type: r.waste_type || 'Mixed',
@@ -54,72 +99,51 @@ export function useCleaningRecords() {
                 status: r.status || 'VERIFIED',
                 photo_url: r.photo_url,
                 admin_note: r.admin_note,
-                is_live: false
+                is_live: false,
+                source_type: 'RVM'
             }));
-
-            // Also fetch live submission reviews as waste disposal records
-            const { data: submissions, error: subError } = await supabase
-                .from('submission_reviews')
-                .select('id, device_no, waste_type, api_weight, calculated_value, submitted_at, phone, photo_url, status')
-                .order('submitted_at', { ascending: false })
-                .limit(200);
-
-            if (subError) console.error("CleaningRecords: Submission fetch error:", subError);
-
-            const subRecords: CleaningRecord[] = (submissions || []).map((s: any) => ({
-                id: `sub-${s.id}`,
-                device_no: s.device_no || '-',
-                waste_type: s.waste_type || 'Recyclable',
-                bag_weight_collected: Number(s.api_weight || 0),
-                cleaned_at: s.submitted_at || new Date().toISOString(),
-                cleaner_name: s.phone ? `User: ${s.phone.substring(0, 8)}...` : 'Unknown',
-                status: s.status === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
-                photo_url: s.photo_url || '',
-                is_live: true,
-                phone: s.phone
-            }));
-
-            // Merge both arrays, sorted by time (newest first)
-            const merged = [...cleanRecords, ...subRecords].sort((a, b) => 
-                new Date(b.cleaned_at).getTime() - new Date(a.cleaned_at).getTime()
-            );
-
-            records.value = merged;
-
-            if (records.value.length === 0) {
-                console.log('[CleaningRecords] No data found from any source');
-            } else {
-                console.log(`[CleaningRecords] Loaded ${records.value.length} records (${cleanRecords.length} cleaning, ${subRecords.length} live submissions)`);
-            }
-            
-        } catch (err) {
-            console.error("Error fetching logs:", err);
-        } finally {
-            loading.value = false;
+        } catch (e) {
+            console.error("Fallback failed:", e);
+            records.value = [];
         }
     };
 
-    // 2. Approve
     const approveCleaning = async (id: string) => {
-        if (id.startsWith('sub-')) return; // Can't approve live submissions
+        // New table
         const { error } = await supabase
-            .from('cleaning_records')
-            .update({ status: 'VERIFIED' })
+            .from('collection_tasks')
+            .update({ status: 'VERIFIED', verified_at: new Date().toISOString() })
             .eq('id', id);
-        if (!error) await fetchCleaningLogs();
+        
+        if (error) {
+            // Fallback: old cleaning_records
+            const { error: oldErr } = await supabase
+                .from('cleaning_records')
+                .update({ status: 'VERIFIED' })
+                .eq('id', id);
+            if (!oldErr) await fetchCleaningLogs();
+        } else {
+            await fetchCleaningLogs();
+        }
     };
 
-    // 3. Reject
     const rejectCleaning = async (id: string, reason: string) => {
-        if (id.startsWith('sub-')) return; // Can't reject live submissions
         const { error } = await supabase
-            .from('cleaning_records')
-            .update({ status: 'REJECTED', admin_note: reason })
+            .from('collection_tasks')
+            .update({ status: 'REJECTED', admin_notes: reason })
             .eq('id', id);
-        if (!error) await fetchCleaningLogs();
+        
+        if (error) {
+            const { error: oldErr } = await supabase
+                .from('cleaning_records')
+                .update({ status: 'REJECTED', admin_note: reason })
+                .eq('id', id);
+            if (!oldErr) await fetchCleaningLogs();
+        } else {
+            await fetchCleaningLogs();
+        }
     };
 
-    // 4. Helper
     const formatDate = (dateString: string) => {
         if (!dateString) return '-';
         return new Date(dateString).toLocaleString('en-MY', {

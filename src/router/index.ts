@@ -120,13 +120,37 @@ const router = createRouter({
           path: 'admins', 
           name: 'admins',
           component: AdminManager,
-          meta: { title: 'Admin Access' } 
+          meta: { title: 'Agencies Management' } 
+        },
+        {
+          path: 'collections',
+          name: 'Collections',
+          component: () => import('../views/CleaningLogs.vue'),
+          meta: { title: 'Collections' } 
         },
         {
           path: 'cleaning-logs',
-          name: 'CleaningLogs',
-          component: () => import('../views/CleaningLogs.vue'),
-          meta: { title: 'Waste Logs' } 
+          name: 'BulkCollection',
+          component: () => import('../views/BulkCollection.vue'),
+          meta: { title: 'Bulk Collection' } 
+        },
+        {
+          path: 'shop-orders',
+          name: 'ShopOrders',
+          component: () => import('../views/ShopOrders.vue'),
+          meta: { title: 'Shop Orders' } 
+        },
+        {
+          path: 'support',
+          name: 'CustomerSupport',
+          component: () => import('../views/CustomerSupport.vue'),
+          meta: { title: 'Customer Support' } 
+        },
+        {
+          path: 'ai-verification',
+          name: 'AIVerification',
+          component: () => import('../views/AIVerification.vue'),
+          meta: { title: 'AI Verification' } 
         },
         {
           path: 'settings',
@@ -158,6 +182,12 @@ const router = createRouter({
           name: 'InvestorManagement',
           component: () => import('../views/SuperAdmin/InvestorManagement.vue'),
           meta: { requiresSuperAdmin: true, title: 'Investor Management' } 
+        },
+        {
+          path: 'commission',
+          name: 'CommissionSettings',
+          component: () => import('../views/CommissionSettings.vue'),
+          meta: { requiresSuperAdmin: true, title: 'Commission Settings' } 
         },
         {
           path: 'super-admin/config',
