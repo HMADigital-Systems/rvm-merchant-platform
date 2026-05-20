@@ -42,11 +42,12 @@ export function useSubmissionReviews() {
     // --- Filtered Data (shallow ref to avoid deep reactivity on large arrays) ---
     const filteredReviews = ref<any[]>([]);
     
-    function filterByTab(tab: string) {
-        if (tab === 'PENDING') return reviews.value.filter((r: any) => r.status === 'PENDING' || r.status === 'Pending');
-        if (tab === 'FLAGGED') return reviews.value.filter((r: any) => r.status === 'Flagged' || r.is_suspicious === true);
-        if (tab === 'APPROVED' || tab === 'VERIFIED') return reviews.value.filter((r: any) => r.status === 'VERIFIED' || r.status === 'Approved');
-        return reviews.value.filter((r: any) => r.status === tab);
+    function filterByTab(tab?: string) {
+        const t = tab || activeStatusTab.value;
+        if (t === 'PENDING') return reviews.value.filter((r: any) => r.status === 'PENDING' || r.status === 'Pending');
+        if (t === 'FLAGGED') return reviews.value.filter((r: any) => r.status === 'Flagged' || r.is_suspicious === true);
+        if (t === 'APPROVED' || t === 'VERIFIED') return reviews.value.filter((r: any) => r.status === 'VERIFIED' || r.status === 'Approved');
+        return reviews.value.filter((r: any) => r.status === t);
     }
     
     // Trigger re-filter when tab changes
